@@ -5,13 +5,7 @@
 VERSION = $(shell python -c 'import pycam; print(pycam.VERSION)')
 VERSION_FILE = pycam/Version.py
 REPO_TAGS ?= https://pycam.svn.sourceforge.net/svnroot/pycam/tags
-RELEASE_PREFIX ?= pycam-
 ARCHIVE_DIR_RELATIVE ?= release-archives
-EXPORT_DIR = $(RELEASE_PREFIX)$(VERSION)
-EXPORT_FILE_PREFIX = $(EXPORT_DIR)
-EXPORT_ZIP = $(EXPORT_FILE_PREFIX).zip
-EXPORT_TGZ = $(EXPORT_FILE_PREFIX).tar.gz
-EXPORT_WIN32 = $(EXPORT_FILE_PREFIX).win32.exe
 PYTHON_EXE ?= python
 # check if the local version of python's distutils support "--plat-name"
 # (introduced in python 2.6)
@@ -26,37 +20,29 @@ ARCHIVE_DIR := $(shell pwd)/$(ARCHIVE_DIR_RELATIVE)
 	pylint-relaxed pylint-strict docs upload-docs update-version update-deb-changelog
 
 dist: zip tgz win32
-	@# remove the tmp directory when everything is done
-	@rm -rf "$(EXPORT_DIR)"
-
-clean:
-	@rm -rf "$(EXPORT_DIR)"
+	@# we can/should remove the version file in order to avoid a stale local version
 	@rm -f "$(VERSION_FILE)"
 
-man: git_export
-	@make -C "$(EXPORT_DIR)/man"
+clean:
+	@rm -rf build
+	@rm -f "$(VERSION_FILE)"
 
-git_export: clean
-	@if git status 2>/dev/null >&2;\
-		then git clone . "$(EXPORT_DIR)";\
-		else echo "No git repo found."; exit 1;\
-	fi
-	# Windows needs a different name for the startup script - due to process creation
-	# (no fork/exec)
-	@cp "$(EXPORT_DIR)/scripts/pycam" "$(EXPORT_DIR)/scripts/pycam-loader.py"
+man:
+	@make -C man
+
 
 create_archive_dir:
 	@mkdir -p "$(ARCHIVE_DIR)"
 
-zip: create_archive_dir man git_export
-	cd "$(EXPORT_DIR)"; $(PYTHON_EXE) setup.py sdist --format zip --dist-dir "$(ARCHIVE_DIR)"
+zip: create_archive_dir man
+	$(PYTHON_EXE) setup.py sdist --format zip --dist-dir "$(ARCHIVE_DIR)"
 
-tgz: create_archive_dir man git_export
-	cd "$(EXPORT_DIR)"; $(PYTHON_EXE) setup.py sdist --format gztar --dist-dir "$(ARCHIVE_DIR)"
+tgz: create_archive_dir man
+	$(PYTHON_EXE) setup.py sdist --format gztar --dist-dir "$(ARCHIVE_DIR)"
 
-win32: create_archive_dir man git_export
+win32: create_archive_dir man
 	# this is a binary release
-	cd "$(EXPORT_DIR)"; $(PYTHON_EXE) setup.py bdist_wininst --user-access-control force \
+	$(PYTHON_EXE) setup.py bdist_wininst --user-access-control force \
 		--dist-dir "$(ARCHIVE_DIR)" $(DISTUTILS_PLAT_NAME)
 
 update-deb-changelog:
