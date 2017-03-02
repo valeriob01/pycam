@@ -16,5 +16,7 @@ Thumbs.db
 *~
 .*.swp
 
+man/pycam.1
+
 # Generated mkdocs files go into the site directory
 site/
