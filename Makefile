@@ -21,6 +21,9 @@ PYTHON_CHECK_STYLE_TARGETS = pycam Tests pyinstaller/hooks/hook-pycam.py scripts
 	check-style pylint-relaxed pylint-strict test \
 	update-version update-deb-changelog
 
+build: man update-version
+	$(PYTHON_EXE) setup.py build
+
 archive: tgz win32
 	@# we can/should remove the version file in order to avoid a stale local version
 	@rm -f "$(VERSION_FILE)"
