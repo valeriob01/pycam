@@ -21,6 +21,20 @@ PYTHON_CHECK_STYLE_TARGETS = pycam Tests pyinstaller/hooks/hook-pycam.py scripts
 	check-style pylint-relaxed pylint-strict test \
 	update-version update-deb-changelog
 
+info:
+	@echo "Available targets:"
+	@echo "    build"
+	@echo "    clean"
+	@echo "    dist"
+	@echo "    docs"
+	@echo "    man"
+	@echo "    upload-docs"
+	@echo
+	@echo "Style checks:"
+	@echo "    check-style"
+	@echo "    pylint-relaxed"
+	@echo "    pylint-strict"
+
 build: man update-version
 	$(PYTHON_EXE) setup.py build
 
