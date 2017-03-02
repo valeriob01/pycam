@@ -23,7 +23,7 @@ PYTHON_CHECK_STYLE_TARGETS = pycam Tests pyinstaller/hooks/hook-pycam.py scripts
 ARCHIVE_DIR := $(shell pwd)/$(ARCHIVE_DIR_RELATIVE)
 
 .PHONY: zip tgz win32 clean dist git_export upload create_archive_dir man check-style test \
-	pylint-relaxed pylint-strict docs upload-docs update-version
+	pylint-relaxed pylint-strict docs upload-docs update-version update-deb-changelog
 
 dist: zip tgz win32
 	@# remove the tmp directory when everything is done
@@ -67,6 +67,14 @@ upload:
 		-m "added released tgz file for version $(VERSION)"
 	svn import "$(ARCHIVE_DIR)/$(EXPORT_WIN32)" "$(REPO_TAGS)/archives/$(EXPORT_WIN32)" \
 		-m "added released win32 installer for version $(VERSION)"
+
+update-deb-changelog:
+	@# retrieve the log of all commits since the latest release and add it to the deb changelog
+	if ! grep -qFw "$(subst -,.,VERSION)" debian/changelog; then \
+		git log --pretty=format:%s "$(shell echo "v$(VERSION)" | cut -f 1 -d -).." | \
+			DEBFULLNAME="PyCAM Builder" DEBEMAIL="builder@pycam.org" \
+			xargs -r -d '\n' -n 1 -- debchange --newversion "$(subst -,.,$(VERSION))"; \
+	fi
 
 update-version:
 	@echo 'VERSION = "$(VERSION)"' >| "$(VERSION_FILE)"

@@ -27,7 +27,7 @@ include /usr/share/dpkg/default.mk
 # debian source package.
 prep-source:
 	$(MAKE) update-version
-	debian/update-dch-from-git
+	$(MAKE) update-deb-changelog
 
 override_dh_auto_build:
 	$(MAKE) -C man
