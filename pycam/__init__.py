@@ -25,7 +25,7 @@ import subprocess
 
 try:
     from Version import VERSION
-except:
+except ImportError:
     # Failed to import Version.py, we must be running out of a git
     # checkout where the user forgot to run `make pycam/Version.py`.
     repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
