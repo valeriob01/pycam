@@ -2,7 +2,8 @@
 # from the subversion repository.
 
 # use something like "VERSION=0.2 make" to override the VERSION on the command line
-VERSION ?= $(shell sed -n "s/^.*[\t ]*VERSION[\t ]*=[\t ]*[\"']\([^\"']*\)[\"'].*/\1/gp" pycam/__init__.py)
+VERSION = $(shell python -c 'import pycam; print(pycam.VERSION)')
+VERSION_FILE = pycam/Version.py
 REPO_TAGS ?= https://pycam.svn.sourceforge.net/svnroot/pycam/tags
 RELEASE_PREFIX ?= pycam-
 ARCHIVE_DIR_RELATIVE ?= release-archives
@@ -22,7 +23,7 @@ PYTHON_CHECK_STYLE_TARGETS = pycam Tests pyinstaller/hooks/hook-pycam.py scripts
 ARCHIVE_DIR := $(shell pwd)/$(ARCHIVE_DIR_RELATIVE)
 
 .PHONY: zip tgz win32 clean dist git_export upload create_archive_dir man check-style test \
-	pylint-relaxed pylint-strict docs upload-docs
+	pylint-relaxed pylint-strict docs upload-docs update-version
 
 dist: zip tgz win32
 	@# remove the tmp directory when everything is done
@@ -30,6 +31,7 @@ dist: zip tgz win32
 
 clean:
 	@rm -rf "$(EXPORT_DIR)"
+	@rm -f "$(VERSION_FILE)"
 
 man: git_export
 	@make -C "$(EXPORT_DIR)/man"
@@ -65,6 +67,9 @@ upload:
 		-m "added released tgz file for version $(VERSION)"
 	svn import "$(ARCHIVE_DIR)/$(EXPORT_WIN32)" "$(REPO_TAGS)/archives/$(EXPORT_WIN32)" \
 		-m "added released win32 installer for version $(VERSION)"
+
+update-version:
+	@echo 'VERSION = "$(VERSION)"' >| "$(VERSION_FILE)"
 
 check-style:
 	scripts/run_flake8 $(PYTHON_CHECK_STYLE_TARGETS)

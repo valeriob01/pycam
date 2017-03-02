@@ -29,11 +29,12 @@ except:
     # Failed to import Version.py, we must be running out of a git
     # checkout where the user forgot to run `make pycam/Version.py`.
     repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-    git_proc = subprocess.Popen(["./scripts/get-version"], stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, cwd=repo_dir)
+    git_proc = subprocess.Popen(["git", "describe", "--dirty", "--tags", "--match", "v[0-9].*"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=repo_dir)
     stdout, stderr = git_proc.communicate()
     if git_proc.returncode == 0:
-        VERSION = stdout.strip()
+        # remove a "v" prefix
+        VERSION = stdout.strip().lstrip("v")
     else:
         # No pycam/Version.py and git failed to give us a version number, give up.
         VERSION = "0.0-unknown"
