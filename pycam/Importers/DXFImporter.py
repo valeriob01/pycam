@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 $ID$
 
@@ -24,12 +23,13 @@ import math
 import re
 import os
 
+from pycam.errors import AbortOperationException, LoadFileError
 from pycam.Geometry.Triangle import Triangle
 from pycam.Geometry.PointUtils import pdist
 from pycam.Geometry.Line import Line
 import pycam.Geometry.Model
 import pycam.Geometry.Matrix
-import pycam.Geometry
+from pycam.Geometry.utils import get_bezier_lines, get_points_of_arc
 import pycam.Utils.log
 import pycam.Utils
 
@@ -42,17 +42,15 @@ def _unescape_control_characters(text):
     for src, dest in (("%%d", u"\u00B0"), ("%%p", u"\u00B1"), ("%%c", u"\u2205"),
                       (r"\P", os.linesep), (r"\~", " ")):
         text = text.replace(src, dest)
-    # python2/3 compatibility
-    try:
-        unichr
-    except NameError:
-        unichr = chr
     # convert "\U+xxxx" to unicode characters
-    return re.sub(r"\\U\+([0-9a-fA-F]{4})",
-                  lambda hex_in: unichr(int(hex_in.groups()[0], 16)), text)
+    return re.sub(r"\\U\+([0-9a-fA-F]{4})", lambda hex_in: chr(int(hex_in.groups()[0], 16)), text)
 
 
-class DXFParser(object):
+class DXFParser:
+    """ parse most entities of an DXF file
+
+    Reference: http://images.autodesk.com/adsk/files/autocad_2012_pdf_dxf-reference_enu.pdf
+    """
 
     # see http://www.autodesk.com/techpubs/autocad/acad2000/dxf/group_code_value_types_dxf_01.htm
     MAX_CHARS_PER_LINE = 2049
@@ -83,7 +81,8 @@ class DXFParser(object):
         "ANGLE_END": 51,
         "TEXT_SKEW_ANGLE": 51,
         "COLOR": 62,
-        "VERTEX_FLAGS": 70,
+        # in the context of the current entity (e.g. VERTEX / POLYLINE / LWPOLYLINE)
+        "ENTITY_FLAGS": 70,
         "TEXT_MIRROR_FLAGS": 71,
         "MTEXT_ALIGNMENT": 71,
         "TEXT_ALIGN_HORIZONTAL": 72,
@@ -204,7 +203,7 @@ class DXFParser(object):
         elif line1 in [self.KEYS[key]
                        for key in ("COLOR", "TEXT_MIRROR_FLAGS", "TEXT_ALIGN_HORIZONTAL",
                                    "TEXT_ALIGN_VERTICAL", "MTEXT_ALIGNMENT", "CURVE_TYPE",
-                                   "VERTEX_FLAGS")]:
+                                   "ENTITY_FLAGS")]:
             try:
                 line2 = int(line2)
             except ValueError:
@@ -213,17 +212,18 @@ class DXFParser(object):
                 line1 = None
                 line2 = None
         elif line1 in [self.KEYS[key] for key in ("DEFAULT", "TEXT_MORE")]:
-            # check the string for invalid characters
-            try:
-                text = line2.decode("utf")
-            except UnicodeDecodeError:
-                log.warn("DXFImporter: Invalid character in string in line %d", self.line_number)
-                text = line2.decode("utf", errors="ignore")
-            line2 = _unescape_control_characters(text)
+            line2 = _unescape_control_characters(self._carefully_decode(line2))
         else:
-            line2 = line2.upper()
+            line2 = self._carefully_decode(line2).upper()
         self.line_number += 2
         return line1, line2
+
+    def _carefully_decode(self, text):
+        try:
+            return text.decode("utf-8")
+        except UnicodeDecodeError:
+            log.warn("DXFImporter: Invalid character in string in line %d", self.line_number)
+            return text.decode("utf-8", errors="ignore")
 
     def parse_content(self):
         key, value = self._read_key_value()
@@ -312,20 +312,22 @@ class DXFParser(object):
                 if key == self.KEYS["CURVE_TYPE"]:
                     if value == 8:
                         params["CURVE_TYPE"] = "BEZIER"
-                elif key == self.KEYS["VERTEX_FLAGS"]:
+                elif key == self.KEYS["ENTITY_FLAGS"]:
                     if value == 1:
-                        params["VERTEX_FLAGS"] = "EXTRA_VERTEX"
+                        if "ENTITY_FLAGS" not in params:
+                            params["ENTITY_FLAGS"] = set()
+                        params["ENTITY_FLAGS"].add("IS_CLOSED")
                 key, value = self._read_key_value()
             if key is not None:
                 self._push_on_stack(key, value)
         else:
             # closing
             if ("CURVE_TYPE" in params) and (params["CURVE_TYPE"] == "BEZIER"):
-                self.lines.extend(pycam.Geometry.get_bezier_lines(self._open_sequence_items))
-                if ("VERTEX_FLAGS" in params) and (params["VERTEX_FLAGS"] == "EXTRA_VERTEX"):
+                self.lines.extend(get_bezier_lines(self._open_sequence_items))
+                if ("ENTITY_FLAGS" in params) and ("IS_CLOSED" in params["ENTITY_FLAGS"]):
                     # repeat the same polyline on the other side
                     self._open_sequence_items.reverse()
-                    self.lines.extend(pycam.Geometry.get_bezier_lines(self._open_sequence_items))
+                    self.lines.extend(get_bezier_lines(self._open_sequence_items))
             else:
                 points = [p for p, bulge in self._open_sequence_items]
                 for index in range(len(points) - 1):
@@ -333,7 +335,8 @@ class DXFParser(object):
                     next_point = points[index + 1]
                     if point != next_point:
                         self.lines.append(Line(point, next_point))
-                if ("VERTEX_FLAGS" in params) and (params["VERTEX_FLAGS"] == "EXTRA_VERTEX"):
+                if ("ENTITY_FLAGS" in params) and ("IS_CLOSED" in params["ENTITY_FLAGS"]):
+                    # repeat the same polyline on the other side
                     self.lines.append(Line(points[-1], points[0]))
             self._open_sequence_items = []
             self._open_sequence_params = {}
@@ -355,7 +358,7 @@ class DXFParser(object):
 
         current_point = [None, None, None]
         bulge = None
-        extra_vertex_flag = False
+        is_closed = False
         key, value = self._read_key_value()
         while (key is not None) and (key != self.KEYS["MARKER"]):
             if key == self.KEYS["P1_X"]:
@@ -371,9 +374,9 @@ class DXFParser(object):
             elif key == self.KEYS["VERTEX_BULGE"]:
                 bulge = value
                 axis = None
-            elif key == self.KEYS["VERTEX_FLAGS"]:
+            elif key == self.KEYS["ENTITY_FLAGS"]:
                 if value == 1:
-                    extra_vertex_flag = True
+                    is_closed = True
                 axis = None
             else:
                 axis = None
@@ -401,16 +404,17 @@ class DXFParser(object):
             log.warn("DXFImporter: Empty LWPOLYLINE definition between line %d and %d",
                      start_line, end_line)
         else:
+            if is_closed:
+                points.append(points[0])
             for index in range(len(points) - 1):
                 point, bulge = points[index]
-                next_point, next_bulge = points[index + 1]
+                # It seems like the "next_bulge" value is not relevant for the current set of
+                # vertices. At least the test DXF file "bezier_lines.dxf" indicates, that we can
+                # ignore it for the decision about a straight line or a bezier line.
+                next_point = points[index + 1][0]
                 if point != next_point:
-                    if bulge or next_bulge:
-                        self.lines.extend(pycam.Geometry.get_bezier_lines(
-                            ((point, bulge), (next_point, next_bulge))))
-                        if extra_vertex_flag:
-                            self.lines.extend(pycam.Geometry.get_bezier_lines(
-                                ((next_point, next_bulge), (point, bulge))))
+                    if bulge:
+                        self.lines.extend(get_bezier_lines(((point, bulge), (next_point, bulge))))
                     else:
                         # straight line
                         self.lines.append(Line(point, next_point))
@@ -841,8 +845,7 @@ class DXFParser(object):
                 # use the color code as the z coordinate
                 center[2] = float(color) / 255
             center = tuple(center)
-            xy_point_coords = pycam.Geometry.get_points_of_arc(center, radius, angle_start,
-                                                               angle_end)
+            xy_point_coords = get_points_of_arc(center, radius, angle_start, angle_end)
             # Somehow the order of points seems to be the opposite of what is
             # expected.
             xy_point_coords.reverse()
@@ -869,24 +872,26 @@ class DXFParser(object):
 
 def import_model(filename, color_as_height=False, fonts_cache=None, callback=None, **kwargs):
     if hasattr(filename, "read"):
+        should_close = False
         infile = filename
     else:
+        should_close = True
         try:
             infile = pycam.Utils.URIHandler(filename).open()
-        except IOError as err_msg:
-            log.error("DXFImporter: Failed to read file (%s): %s", filename, err_msg)
-            return None
+        except IOError as exc:
+            raise LoadFileError("DXFImporter: Failed to read file ({}): {}".format(filename, exc))
 
     result = DXFParser(infile, color_as_height=color_as_height, fonts_cache=fonts_cache,
                        callback=callback)
+    if should_close:
+        infile.close()
 
     model_data = result.get_model()
     lines = model_data["lines"]
     triangles = model_data["triangles"]
 
     if callback and callback():
-        log.warn("DXFImporter: load model operation was cancelled")
-        return None
+        raise AbortOperationException("DXFImporter: load model operation was cancelled")
 
     # 3D models are preferred over 2D models
     if triangles:
@@ -925,7 +930,6 @@ def import_model(filename, color_as_height=False, fonts_cache=None, callback=Non
                  len(lines), len(model.get_polygons()))
         return model
     else:
-        link = "http://sf.net/apps/mediawiki/pycam/?title=SupportedFormats"
-        log.error('DXFImporter: No supported elements found in DXF file!\n'
-                  '<a href="%s">Read PyCAM\'s modeling hints.</a>', link)
-        return None
+        link = "http://pycam.sourceforge.net/supported-formats"
+        raise LoadFileError('DXFImporter: No supported elements found in DXF file!\n'
+                            '<a href="%s">Read PyCAM\'s modeling hints.</a>'.format(link))

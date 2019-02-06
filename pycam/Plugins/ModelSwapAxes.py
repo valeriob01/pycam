@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -39,13 +38,14 @@ class ModelSwapAxes(pycam.Plugins.PluginBase):
             self.register_gtk_handlers(self._gtk_handlers)
             self.register_event_handlers(self._event_handlers)
             self._update_controls()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
-            self.core.unregister_ui("model_handling", self.gui.get_object("ModelSwapBox"))
-            self.unregister_gtk_handlers(self._gtk_handlers)
             self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
+            self.core.unregister_ui("model_handling", self.gui.get_object("ModelSwapBox"))
+        super().teardown()
 
     def _update_controls(self):
         box = self.gui.get_object("ModelSwapBox")
@@ -58,18 +58,13 @@ class ModelSwapAxes(pycam.Plugins.PluginBase):
         models = self.core.get("models").get_selected()
         if not models:
             return
-        self.core.emit_event("model-change-before")
-        for axes, template in (("XY", "x_swap_y"), ("XZ", "x_swap_z"), ("YZ", "y_swap_z")):
+        for axes, matrix in (("XY", [[0, 1, 0], [1, 0, 0], [0, 0, 1]]),
+                             ("XZ", [[0, 0, 1], [0, 1, 0], [1, 0, 0]]),
+                             ("YZ", [[1, 0, 0], [0, 0, 1], [0, 1, 0]])):
             if self.gui.get_object("SwapAxes%s" % axes).get_active():
                 break
         else:
             assert False, "No axis selected"
-        progress = self.core.get("progress")
-        progress.update(text="Swap axes of model")
-        progress.disable_cancel()
-        progress.set_multiple(len(models), "Model")
         for model in models:
-            model.model.transform_by_template(template, callback=progress.update)
-            progress.update_multiple()
-        progress.finish()
-        self.core.emit_event("model-change-after")
+            model.extend_value("transformations",
+                               [{"action": "multiply_matrix", "matrix": matrix}])

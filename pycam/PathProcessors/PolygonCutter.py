@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 Copyright 2008 Lode Leroy
@@ -27,7 +26,7 @@ from pycam.Toolpath import simplify_toolpath
 
 class PolygonCutter(pycam.PathProcessors.BasePathProcessor):
     def __init__(self, reverse=False):
-        super(PolygonCutter, self).__init__()
+        super().__init__()
         self.curr_path = None
         self.scanline = None
         self.polygon_extractor = PolygonExtractor(PolygonExtractor.MONOTONE)
@@ -58,7 +57,7 @@ class PolygonCutter(pycam.PathProcessors.BasePathProcessor):
             source_paths.extend(self.polygon_extractor.ver_path_list)
         for path in source_paths:
             points = path.points
-            for i in range(0, (len(points)+1)/2):
+            for i in range((len(points) + 1) // 2):
                 new_path = Path()
                 if i % 2 == 0:
                     new_path.append(points[i])

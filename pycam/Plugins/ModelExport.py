@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -47,19 +46,20 @@ class ModelExport(pycam.Plugins.PluginBase):
             self.register_event_handlers(self._event_handlers)
             self._update_widgets()
         self.core.register_chain("model_export", self._fallback_model_export, weight=1000)
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
             save_action = self.gui.get_object("SaveModel")
             self.core.unregister_ui("file_menu", save_action)
             self.unregister_gtk_accelerator("model", save_action)
             save_as_action = self.gui.get_object("SaveAsModel")
             self.core.unregister_ui("file_menu", save_as_action)
             self.unregister_gtk_accelerator("model", save_as_action)
-            self.unregister_gtk_handlers(self._gtk_handlers)
-            self.unregister_event_handlers(self._event_handlers)
         self.core.unregister_chain("model_export", self._fallback_model_export)
+        super().teardown()
 
     def _fallback_model_export(self, models):
         if models:
@@ -96,15 +96,16 @@ class ModelExportTrimesh(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.core.register_chain("model_export", self.export_trimesh, weight=30)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_chain("model_export", self.export_trimesh)
+        super().teardown()
 
     def export_trimesh(self, models):
         removal_list = []
         for index, model in enumerate(models):
-            if not hasattr(model.model, "triangles"):
+            if not hasattr(model.get_model(), "triangles"):
                 continue
             # determine the file type
             # TODO: this needs to be decided by the exporter code
@@ -126,7 +127,7 @@ class ModelExportTrimesh(pycam.Plugins.PluginBase):
                 file_in = open(uri.get_local_path(), "w")
                 # TODO: fill in "comment" with "meta_data"
                 # TODO: call a specific exporter
-                model.model.export(unit=self.core.get("unit")).write(file_in)
+                model.get_model().export(unit=self.core.get("unit")).write(file_in)
                 file_in.close()
                 removal_list.append(index)
             except IOError as err_msg:
@@ -144,15 +145,16 @@ class ModelExportContour(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.core.register_chain("model_export", self.export_contour, weight=40)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_chain("model_export", self.export_contour)
+        super().teardown()
 
     def export_contour(self, models):
         removal_list = []
         for index, model in enumerate(models):
-            if not hasattr(model.model, "get_polygons"):
+            if not hasattr(model.get_model(), "get_polygons"):
                 continue
             # determine the file type
             # TODO: this needs to be decided by the exporter code
@@ -173,7 +175,7 @@ class ModelExportContour(pycam.Plugins.PluginBase):
                 file_in = open(uri.get_local_path(), "w")
                 # TODO: fill in "comment" with "meta_data"
                 # TODO: call a specific exporter
-                model.model.export(unit=self.core.get("unit")).write(file_in)
+                model.get_model().export(unit=self.core.get("unit")).write(file_in)
                 file_in.close()
                 removal_list.append(index)
             except IOError as err_msg:

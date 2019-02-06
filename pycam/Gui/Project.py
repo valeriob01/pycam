@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -20,34 +19,31 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 
-import ConfigParser
+import collections
 import datetime
 import logging
 import os
-import pickle
-import StringIO
 import sys
 import webbrowser
 
-import gobject
-import gtk
+from gi.repository import GObject
+from gi.repository import Gtk
+from gi.repository import Gdk
+from gi.repository import Gio
 
-from pycam import VERSION, HELP_WIKI_URL
-import pycam.Gui.Settings
-import pycam.Importers.CXFImporter
-import pycam.Importers.TestModel
+from pycam import DOC_BASE_URL, VERSION
+from pycam.errors import InitializationError
 import pycam.Importers
-import pycam.Plugins
-from pycam.Utils.locations import get_ui_file_location, get_external_program_location, \
-        get_all_program_locations
+import pycam.Gui
+from pycam.Utils.locations import get_ui_file_location, get_external_program_location
 import pycam.Utils
+from pycam.Utils.events import get_mainloop
 import pycam.Utils.log
 
 
 GTKBUILD_FILE = "pycam-project.ui"
 GTKMENU_FILE = "menubar.xml"
 GTKRC_FILE_WINDOWS = "gtkrc_windows"
-PICKLE_PROTOCOL = 2
 
 WINDOW_ICON_FILENAMES = ["logo_%dpx.png" % pixels for pixels in (16, 32, 48, 64, 128)]
 
@@ -58,60 +54,6 @@ FILTER_MODEL = (("All supported model filetypes",
                 ("SVG contours", "*.svg"),
                 ("PS contours", ("*.eps", "*.ps")))
 
-PREFERENCES_DEFAULTS = {
-    "unit": "mm",
-    "default_task_settings_file": "",
-    "show_model": True,
-    "show_support_preview": True,
-    "show_axes": True,
-    "show_dimensions": True,
-    "show_bounding_box": True,
-    "show_toolpath": True,
-    "show_tool": False,
-    "show_directions": False,
-    "color_background": {"red": 0.0, "green": 0.0, "blue": 0.0, "alpha": 1.0},
-    "color_model": {"red": 0.5, "green": 0.5, "blue": 1.0, "alpha": 1.0},
-    "color_support_preview": {"red": 0.8, "green": 0.8, "blue": 0.3, "alpha": 1.0},
-    "color_bounding_box": {"red": 0.3, "green": 0.3, "blue": 0.3, "alpha": 1.0},
-    "color_tool": {"red": 1.0, "green": 0.2, "blue": 0.2, "alpha": 1.0},
-    "color_toolpath_cut": {"red": 1.0, "green": 0.5, "blue": 0.5, "alpha": 1.0},
-    "color_toolpath_return": {"red": 0.9, "green": 1.0, "blue": 0.1, "alpha": 0.4},
-    "color_material": {"red": 1.0, "green": 0.5, "blue": 0.0, "alpha": 1.0},
-    "color_grid": {"red": 0.75, "green": 1.0, "blue": 0.7, "alpha": 0.55},
-    "view_light": True,
-    "view_shadow": True,
-    "view_polygon": True,
-    "view_perspective": True,
-    "tool_progress_max_fps": 30,
-    "gcode_safety_height": 25.0,
-    "gcode_plunge_feedrate": 100.0,
-    "gcode_minimum_step_x": 0.0001,
-    "gcode_minimum_step_y": 0.0001,
-    "gcode_minimum_step_z": 0.0001,
-    "gcode_path_mode": 0,
-    "gcode_motion_tolerance": 0,
-    "gcode_naive_tolerance": 0,
-    "gcode_start_stop_spindle": True,
-    "gcode_filename_extension": "",
-    "gcode_spindle_delay": 3,
-    "external_program_inkscape": "",
-    "external_program_pstoedit": "",
-    "touch_off_on_startup": False,
-    "touch_off_on_tool_change": False,
-    "touch_off_position_type": "absolute",
-    "touch_off_position_x": 0.0,
-    "touch_off_position_y": 0.0,
-    "touch_off_position_z": 0.0,
-    "touch_off_rapid_move": 0.0,
-    "touch_off_slow_move": 1.0,
-    "touch_off_slow_feedrate": 20,
-    "touch_off_height": 0.0,
-    "touch_off_pause_execution": False,
-}
-""" the listed items will be loaded/saved via the preferences file in the
-user's home directory on startup/shutdown"""
-
-MAX_UNDO_STATES = 10
 FILENAME_DRAG_TARGETS = ("text/uri-list", "text-plain")
 
 
@@ -124,8 +66,8 @@ def get_icons_pixbuffers():
         abs_filename = get_ui_file_location(icon_filename, silent=True)
         if abs_filename:
             try:
-                result.append(gtk.gdk.pixbuf_new_from_file(abs_filename))
-            except gobject.GError as err_msg:
+                result.append(Gdk.pixbuf_new_from_file(abs_filename))
+            except GObject.GError as err_msg:
                 # ignore icons that are not found
                 log.debug("Failed to process window icon (%s): %s", abs_filename, err_msg)
         else:
@@ -133,207 +75,59 @@ def get_icons_pixbuffers():
     return result
 
 
-UI_FUNC_INDEX, UI_WIDGET_INDEX = range(2)
-WIDGET_NAME_INDEX, WIDGET_OBJ_INDEX, WIDGET_WEIGHT_INDEX, WIDGET_ARGS_INDEX = range(4)
-HANDLER_FUNC_INDEX, HANDLER_ARG_INDEX = range(2)
-EVENT_HANDLER_INDEX, EVENT_BLOCKER_INDEX = range(2)
-CHAIN_FUNC_INDEX, CHAIN_WEIGHT_INDEX = range(2)
-
-
-class EventCore(pycam.Gui.Settings.Settings):
-
-    def __init__(self):
-        super(EventCore, self).__init__()
-        self.event_handlers = {}
-        self.ui_sections = {}
-        self.chains = {}
-        self.state_dumps = []
-        self.namespace = {}
-
-    def register_event(self, event, func, *args):
-        if event not in self.event_handlers:
-            assert EVENT_HANDLER_INDEX == 0
-            assert EVENT_BLOCKER_INDEX == 1
-            self.event_handlers[event] = [[], 0]
-        assert HANDLER_FUNC_INDEX == 0
-        assert HANDLER_ARG_INDEX == 1
-        self.event_handlers[event][EVENT_HANDLER_INDEX].append((func, args))
-
-    def unregister_event(self, event, func):
-        if event in self.event_handlers:
-            removal_list = []
-            handlers = self.event_handlers[event]
-            for index, item in enumerate(handlers[EVENT_HANDLER_INDEX]):
-                if func == item[HANDLER_FUNC_INDEX]:
-                    removal_list.append(index)
-            removal_list.reverse()
-            for index in removal_list:
-                handlers[EVENT_HANDLER_INDEX].pop(index)
-        else:
-            log.debug("Trying to unregister an unknown event: %s", event)
-
-    def emit_event(self, event, *args, **kwargs):
-        log.debug2("Event emitted: %s", str(event))
-        if event in self.event_handlers:
-            if self.event_handlers[event][EVENT_BLOCKER_INDEX] != 0:
-                return
-            # prevent infinite recursion
-            self.block_event(event)
-            for handler in self.event_handlers[event][EVENT_HANDLER_INDEX]:
-                func = handler[HANDLER_FUNC_INDEX]
-                data = handler[HANDLER_ARG_INDEX]
-                func(*(data + args), **kwargs)
-            self.unblock_event(event)
-        else:
-            log.debug("No events registered for event '%s'", str(event))
-
-    def block_event(self, event):
-        if event in self.event_handlers:
-            self.event_handlers[event][EVENT_BLOCKER_INDEX] += 1
-        else:
-            log.debug("Trying to block an unknown event: %s", str(event))
-
-    def unblock_event(self, event):
-        if event in self.event_handlers:
-            if self.event_handlers[event][EVENT_BLOCKER_INDEX] > 0:
-                self.event_handlers[event][EVENT_BLOCKER_INDEX] -= 1
-            else:
-                log.debug("Trying to unblock non-blocked event '%s'", str(event))
-        else:
-            log.debug("Trying to unblock an unknown event: %s", str(event))
-
-    def register_ui_section(self, section, add_action, clear_action):
-        if section not in self.ui_sections:
-            self.ui_sections[section] = [None, None]
-            self.ui_sections[section][UI_WIDGET_INDEX] = []
-        self.ui_sections[section][UI_FUNC_INDEX] = (add_action, clear_action)
-        self._rebuild_ui_section(section)
-
-    def unregister_ui_section(self, section):
-        if section in self.ui_sections:
-            ui_section = self.ui_sections[section]
-            while ui_section[UI_WIDGET_INDEX]:
-                ui_section[UI_WIDGET_INDEX].pop()
-            del self.ui_sections[section]
-        else:
-            log.debug("Trying to unregister a non-existent ui section: %s", str(section))
-
-    def _rebuild_ui_section(self, section):
-        if section in self.ui_sections:
-            ui_section = self.ui_sections[section]
-            if ui_section[UI_FUNC_INDEX]:
-                add_func, clear_func = ui_section[UI_FUNC_INDEX]
-                ui_section[UI_WIDGET_INDEX].sort(key=lambda x: x[WIDGET_WEIGHT_INDEX])
-                clear_func()
-                for item in ui_section[UI_WIDGET_INDEX]:
-                    if item[WIDGET_ARGS_INDEX]:
-                        args = item[WIDGET_ARGS_INDEX]
-                    else:
-                        args = {}
-                    add_func(item[WIDGET_OBJ_INDEX], item[WIDGET_NAME_INDEX], **args)
-        else:
-            log.debug("Failed to rebuild unknown ui section: %s", str(section))
-
-    def register_ui(self, section, name, widget, weight=0, args_dict=None):
-        if section not in self.ui_sections:
-            self.ui_sections[section] = [None, None]
-            self.ui_sections[section][UI_WIDGET_INDEX] = []
-        assert WIDGET_NAME_INDEX == 0
-        assert WIDGET_OBJ_INDEX == 1
-        assert WIDGET_WEIGHT_INDEX == 2
-        assert WIDGET_ARGS_INDEX == 3
-        current_widgets = [item[1] for item in self.ui_sections[section][UI_WIDGET_INDEX]]
-        if (widget is not None) and (widget in current_widgets):
-            log.debug("Tried to register widget twice: %s -> %s", section, name)
+def gui_activity_guard(func):
+    def gui_activity_guard_wrapper(self, *args, **kwargs):
+        if self.gui_is_active:
             return
-        self.ui_sections[section][UI_WIDGET_INDEX].append((name, widget, weight, args_dict))
-        self._rebuild_ui_section(section)
-
-    def unregister_ui(self, section, widget):
-        if (section in self.ui_sections) or (None in self.ui_sections):
-            if section not in self.ui_sections:
-                section = None
-            ui_section = self.ui_sections[section]
-            removal_list = []
-            for index, item in enumerate(ui_section[UI_WIDGET_INDEX]):
-                if item[WIDGET_OBJ_INDEX] == widget:
-                    removal_list.append(index)
-            removal_list.reverse()
-            for index in removal_list:
-                ui_section[UI_WIDGET_INDEX].pop(index)
-            self._rebuild_ui_section(section)
-        else:
-            log.debug("Trying to unregister unknown ui section: %s", section)
-
-    def register_chain(self, name, func, weight=100):
-        if name not in self.chains:
-            self.chains[name] = []
-        self.chains[name].append((func, weight))
-        self.chains[name].sort(key=lambda item: item[CHAIN_WEIGHT_INDEX])
-
-    def unregister_chain(self, name, func):
-        if name in self.chains:
-            for index, data in enumerate(self.chains[name]):
-                if data[CHAIN_FUNC_INDEX] == func:
-                    self.chains[name].pop(index)
-                    break
-            else:
-                log.debug("Trying to unregister unknown function from %s: %s", name, func)
-        else:
-            log.debug("Trying to unregister from unknown chain: %s", name)
-
-    def call_chain(self, name, *args, **kwargs):
-        if name in self.chains:
-            for data in self.chains[name]:
-                data[CHAIN_FUNC_INDEX](*args, **kwargs)
-        else:
-            log.debug("Called an unknown chain: %s", name)
-
-    def reset_state(self):
-        pass
-
-    def register_namespace(self, name, value):
-        if name in self.namespace:
-            log.info("Trying to register the same key in namespace twice: %s", str(name))
-        self.namespace[name] = value
-
-    def unregister_namespace(self, name):
-        if name not in self.namespace:
-            log.info("Tried to unregister an unknown name from namespace: %s", str(name))
-
-    def get_namespace(self):
-        return self.namespace
+        self.gui_is_active = True
+        try:
+            result = func(self, *args, **kwargs)
+        except Exception:
+            # Catch possible exceptions (except system-exit ones) and
+            # report them.
+            log.error(pycam.Utils.get_exception_report())
+            result = None
+        self.gui_is_active = False
+        return result
+    return gui_activity_guard_wrapper
 
 
-class ProjectGui(object):
+QuestionResponse = collections.namedtuple("QuestionResponse", ("is_yes", "should_memorize"))
+
+
+class ProjectGui(pycam.Gui.BaseUI):
 
     META_DATA_PREFIX = "PYCAM-META-DATA:"
 
-    def __init__(self, no_dialog=False):
-        self.settings = EventCore()
+    def __init__(self, event_manager):
+        super().__init__(event_manager)
+        self._event_handlers = []
         self.gui_is_active = False
-        # during initialization any dialog (e.g. "Unit change") is not allowed
-        # we set the final value later
-        self.no_dialog = True
-        self._batch_queue = []
-        self._undo_states = []
-        self.gui = gtk.Builder()
+        self.gui = Gtk.Builder()
+        self._mainloop_is_running = False
+        self.mainloop = get_mainloop(use_gtk=True)
         gtk_build_file = get_ui_file_location(GTKBUILD_FILE)
         if gtk_build_file is None:
-            gtk.main_quit()
+            raise InitializationError("Failed to load GTK layout specification file: {}"
+                                      .format(gtk_build_file))
         self.gui.add_from_file(gtk_build_file)
-        if pycam.Utils.get_platform() == pycam.Utils.PLATFORM_WINDOWS:
+        if pycam.Utils.get_platform() == pycam.Utils.OSPlatform.WINDOWS:
             gtkrc_file = get_ui_file_location(GTKRC_FILE_WINDOWS)
             if gtkrc_file:
-                gtk.rc_add_default_file(gtkrc_file)
-                gtk.rc_reparse_all_for_settings(gtk.settings_get_default(), True)
+                Gtk.rc_add_default_file(gtkrc_file)
+                Gtk.rc_reparse_all_for_settings(Gtk.settings_get_default(), True)
+        action_group = Gio.SimpleActionGroup()
+        self.settings.set("gtk_action_group_prefix", "pycam")
+        self.settings.set("gtk_action_group", action_group)
         self.window = self.gui.get_object("ProjectWindow")
+        self.window.insert_action_group(
+            self.settings.get("gtk_action_group_prefix"), self.settings.get("gtk_action_group"))
         self.settings.set("main_window", self.window)
         # show stock items on buttons
         # increase the initial width of the window (due to hidden elements)
         self.window.set_default_size(400, -1)
         # initialize the RecentManager (TODO: check for Windows)
-        if False and pycam.Utils.get_platform() == pycam.Utils.PLATFORM_WINDOWS:
+        if False and pycam.Utils.get_platform() == pycam.Utils.OSPlatform.WINDOWS:
             # The pyinstaller binary for Windows fails mysteriously when trying
             # to display the stock item.
             # Error message: Gtk:ERROR:gtkrecentmanager.c:1942:get_icon_fallback:
@@ -341,7 +135,7 @@ class ProjectGui(object):
             self.recent_manager = None
         else:
             try:
-                self.recent_manager = gtk.recent_manager_get_default()
+                self.recent_manager = Gtk.recent_manager_get_default()
             except AttributeError:
                 # GTK 2.12.1 seems to have problems with "RecentManager" on
                 # Windows. Sadly this is the version, that is shipped with the
@@ -350,36 +144,30 @@ class ProjectGui(object):
                 self.recent_manager = None
         # file loading
         self.last_dirname = None
-        self.last_task_settings_uri = None
         self.last_model_uri = None
         # define callbacks and accelerator keys for the menu actions
         for objname, callback, data, accel_key in (
                 ("OpenModel", self.load_model_file, None, "<Control>o"),
                 ("Quit", self.destroy, None, "<Control>q"),
                 ("GeneralSettings", self.toggle_preferences_window, None, "<Control>p"),
-                ("UndoButton", self._restore_undo_state, None, "<Control>z"),
-                ("HelpUserManual", self.show_help, "User_Manual", "F1"),
-                ("HelpIntroduction", self.show_help, "Introduction", None),
-                ("HelpSupportedFormats", self.show_help, "SupportedFormats", None),
-                ("HelpModelTransformations", self.show_help, "ModelTransformations", None),
-                ("HelpToolTypes", self.show_help, "ToolTypes", None),
-                ("HelpProcessSettings", self.show_help, "ProcessSettings", None),
-                ("HelpBoundsSettings", self.show_help, "BoundsSettings", None),
-                ("HelpTaskSetup", self.show_help, "TaskSetup", None),
-                ("HelpGCodeExport", self.show_help, "GCodeExport", None),
-                ("HelpTouchOff", self.show_help, "TouchOff", None),
-                ("HelpSimulation", self.show_help, "Simulation", None),
-                ("Help3DView", self.show_help, "3D_View", None),
-                ("HelpServerMode", self.show_help, "ServerMode", None),
-                ("HelpCommandLine", self.show_help, "CommandlineExamples", None),
-                ("HelpHotkeys", self.show_help, "KeyboardShortcuts", None),
+                ("UndoButton", self.restore_undo_state, None, "<Control>z"),
+                ("HelpIntroduction", self.show_help, "introduction", "F1"),
+                ("HelpSupportedFormats", self.show_help, "supported-formats", None),
+                ("HelpModelTransformations", self.show_help, "model-transformations", None),
+                ("HelpProcessSettings", self.show_help, "process-settings", None),
+                ("HelpBoundsSettings", self.show_help, "bounding-box", None),
+                ("HelpTouchOff", self.show_help, "touch-off", None),
+                ("Help3DView", self.show_help, "3d-view", None),
+                ("HelpServerMode", self.show_help, "server-mode", None),
+                ("HelpCommandLine", self.show_help, "cli-examples", None),
+                ("HelpHotkeys", self.show_help, "keyboard-shortcuts", None),
                 ("ProjectWebsite", self.show_help, "http://pycam.sourceforge.net", None),
                 ("DevelopmentBlog", self.show_help, "http://fab.senselab.org/pycam", None),
                 ("Forum", self.show_help, "http://sourceforge.net/projects/pycam/forums", None),
                 ("BugTracker", self.show_help,
-                 "http://sourceforge.net/tracker/?group_id=237831&atid=1104176", None),
+                 "https://github.com/SebKuzminsky/pycam/issues/", None),
                 ("FeatureRequest", self.show_help,
-                 "http://sourceforge.net/tracker/?group_id=237831&atid=1104179", None)):
+                 "https://github.com/SebKuzminsky/pycam/issues/", None)):
             item = self.gui.get_object(objname)
             action = "activate"
             if data is None:
@@ -387,20 +175,15 @@ class ProjectGui(object):
             else:
                 item.connect(action, callback, data)
             if accel_key:
-                key, mod = gtk.accelerator_parse(accel_key)
+                key, mod = Gtk.accelerator_parse(accel_key)
                 accel_path = "<pycam>/%s" % objname
                 item.set_accel_path(accel_path)
-                gtk.accel_map_change_entry(accel_path, key, mod, True)
+                # Gtk.accel_map_change_entry(accel_path, key, mod, True) FIXME
         # LinkButton does not work on Windows: https://bugzilla.gnome.org/show_bug.cgi?id=617874
-        if pycam.Utils.get_platform() == pycam.Utils.PLATFORM_WINDOWS:
+        if pycam.Utils.get_platform() == pycam.Utils.OSPlatform.WINDOWS:
             def open_url(widget, data=None):
                 webbrowser.open(widget.get_uri())
-            gtk.link_button_set_uri_hook(open_url)
-        # no undo is allowed at the beginning
-        self.gui.get_object("UndoButton").set_sensitive(False)
-        self.settings.register_event("model-change-before", self._store_undo_state)
-        self.settings.register_event("model-change-after",
-                                     lambda: self.settings.emit_event("visual-item-updated"))
+            Gtk.link_button_set_uri_hook(open_url)
         # configure drag-n-drop for config files and models
         self.settings.set("configure-drag-drop-func", self.configure_drag_and_drop)
         self.settings.get("configure-drag-drop-func")(self.window)
@@ -413,31 +196,38 @@ class ProjectGui(object):
         self.gui.get_object("ResetPreferencesButton").connect("clicked", self.reset_preferences)
         self.preferences_window = self.gui.get_object("GeneralSettingsWindow")
         self.preferences_window.connect("delete-event", self.toggle_preferences_window, False)
+        self.preferences_window.insert_action_group(
+            self.settings.get("gtk_action_group_prefix"), self.settings.get("gtk_action_group"))
         self._preferences_window_position = None
         self._preferences_window_visible = False
         # "about" window
         self.about_window = self.gui.get_object("AboutWindow")
         self.about_window.set_version(VERSION)
+        self.about_window.insert_action_group(
+            self.settings.get("gtk_action_group_prefix"), self.settings.get("gtk_action_group"))
         self.gui.get_object("About").connect("activate", self.toggle_about_window, True)
         # we assume, that the last child of the window is the "close" button
         # TODO: fix this ugly hack!
-        self.gui.get_object("AboutWindowButtons").get_children()[-1].connect(
-            "clicked", self.toggle_about_window, False)
+        about_window_children = self.gui.get_object("AboutWindowButtons").get_children()
+        if about_window_children:
+            # it seems to be possible that there are no children - weird :(
+            # see https://github.com/SebKuzminsky/pycam/issues/59
+            about_window_children[-1].connect("clicked", self.toggle_about_window, False)
         self.about_window.connect("delete-event", self.toggle_about_window, False)
         # menu bar
-        uimanager = gtk.UIManager()
+        uimanager = Gtk.UIManager()
         self.settings.set("gtk-uimanager", uimanager)
         self._accel_group = uimanager.get_accel_group()
-
         # send a "delete" event on "CTRL-w" for every window
-        def handle_window_close(accel_group, window, *args):
-            window.emit("delete-event", gtk.gdk.Event(gtk.gdk.DELETE))
-
-        self._accel_group.connect_group(ord('w'), gtk.gdk.CONTROL_MASK, gtk.ACCEL_LOCKED,
-                                        handle_window_close)
+        self._accel_group.connect(
+            ord('w'), Gdk.ModifierType.CONTROL_MASK, Gtk.AccelFlags.LOCKED,
+            lambda accel_group, window, *args: window.emit("delete-event", Gdk.Event()))
+        self._accel_group.connect(
+            ord('q'), Gdk.ModifierType.CONTROL_MASK, Gtk.AccelFlags.LOCKED,
+            lambda *args: self.destroy())
         self.settings.add_item("gtk-accel-group", lambda: self._accel_group)
         for obj in self.gui.get_objects():
-            if isinstance(obj, gtk.Window):
+            if isinstance(obj, Gtk.Window):
                 obj.add_accel_group(self._accel_group)
         # preferences tab
         preferences_book = self.gui.get_object("PreferencesNotebook")
@@ -447,7 +237,7 @@ class ProjectGui(object):
                 preferences_book.remove(child)
 
         def add_preferences_item(item, name):
-            preferences_book.append_page(item, gtk.Label(name))
+            preferences_book.append_page(item, Gtk.Label(name))
 
         self.settings.register_ui_section("preferences", add_preferences_item, clear_preferences)
         for obj_name, label, priority in (
@@ -464,18 +254,11 @@ class ProjectGui(object):
                 general_prefs.remove(item)
 
         def add_general_prefs_item(item, name):
-            general_prefs.pack_start(item, expand=False, padding=3)
+            general_prefs.pack_start(item, expand=False, fill=False, padding=3)
 
         self.settings.register_ui_section("preferences_general", add_general_prefs_item,
                                           clear_general_prefs)
-        # defaults settings file
-        obj = self.gui.get_object("TaskSettingsDefaultFileBox")
-        obj.unparent()
-        self.settings.register_ui("preferences_general", None, obj, 30)
         # set defaults
-        self.cutter = None
-        # add some dummies - to be implemented later ...
-        self.settings.add_item("cutter", lambda: self.cutter)
         main_tab = self.gui.get_object("MainTabs")
 
         def clear_main_tab():
@@ -483,7 +266,7 @@ class ProjectGui(object):
                 main_tab.remove_page(0)
 
         def add_main_tab_item(item, name):
-            main_tab.append_page(item, gtk.Label(name))
+            main_tab.append_page(item, Gtk.Label(name))
 
         # TODO: move these to plugins, as well
         self.settings.register_ui_section("main", add_main_tab_item, clear_main_tab)
@@ -494,7 +277,7 @@ class ProjectGui(object):
 
         def add_main_window_item(item, name, **extra_args):
             # some widgets may want to override the defaults
-            args = {"expand": False, "fill": False}
+            args = {"expand": False, "fill": False, "padding": 3}
             args.update(extra_args)
             main_window.pack_start(item, **args)
 
@@ -511,8 +294,6 @@ class ProjectGui(object):
             self.menubar.set_sensitive(True)
             main_tab.set_sensitive(True)
 
-        self.settings.register_event("gui-disable", disable_gui)
-        self.settings.register_event("gui-enable", enable_gui)
         # configure locations of external programs
         for auto_control_name, location_control_name, browse_button, key in (
                 ("ExternalProgramInkscapeAuto", "ExternalProgramInkscapeControl",
@@ -526,24 +307,32 @@ class ProjectGui(object):
                                    location_control.set_text)
             self.gui.get_object(browse_button).connect("clicked",
                                                        self._browse_external_program_location, key)
+        for objname, callback in (
+                ("ResetWorkspace", lambda widget: self.reset_workspace()),
+                ("LoadWorkspace", lambda widget: self.load_workspace_dialog()),
+                ("SaveWorkspace", lambda widget: self.save_workspace_dialog(
+                    self.last_workspace_uri)),
+                ("SaveAsWorkspace", lambda widget: self.save_workspace_dialog())):
+            self.gui.get_object(objname).connect("activate", callback)
         # set the icons (in different sizes) for all windows
-        gtk.window_set_default_icon_list(*get_icons_pixbuffers())
+        # Gtk.window_set_default_icon_list(*get_icons_pixbuffers()) FIXME
         # load menu data
         gtk_menu_file = get_ui_file_location(GTKMENU_FILE)
         if gtk_menu_file is None:
-            gtk.main_quit()
+            raise InitializationError("Failed to load GTK menu specification file: {}"
+                                      .format(gtk_menu_file))
         uimanager.add_ui_from_file(gtk_menu_file)
         # make the actions defined in the GTKBUILD file available in the menu
-        actiongroup = gtk.ActionGroup("menubar")
-        for action in [aobj for aobj in self.gui.get_objects() if isinstance(aobj, gtk.Action)]:
+        actiongroup = Gtk.ActionGroup("menubar")
+        for action in [aobj for aobj in self.gui.get_objects() if isinstance(aobj, Gtk.Action)]:
             actiongroup.add_action(action)
         # the "pos" parameter is optional since 2.12 - we can remove it later
-        uimanager.insert_action_group(actiongroup, pos=-1)
+        uimanager.insert_action_group(actiongroup)
         # the "recent files" sub-menu
         if self.recent_manager is not None:
-            recent_files_menu = gtk.RecentChooserMenu(self.recent_manager)
+            recent_files_menu = Gtk.RecentChooserMenu(self.recent_manager)
             recent_files_menu.set_name("RecentFilesMenu")
-            recent_menu_filter = gtk.RecentFilter()
+            recent_menu_filter = Gtk.RecentFilter()
             case_converter = pycam.Utils.get_case_insensitive_file_pattern
             for filter_name, patterns in FILTER_MODEL:
                 if not isinstance(patterns, (list, set, tuple)):
@@ -559,7 +348,7 @@ class ProjectGui(object):
             # non-local files (without "file://") are not supported. yet
             recent_files_menu.set_local_only(False)
             # most recent files to the top
-            recent_files_menu.set_sort_type(gtk.RECENT_SORT_MRU)
+            recent_files_menu.set_sort_type(Gtk.RECENT_SORT_MRU)
             # show only ten files
             recent_files_menu.set_limit(10)
             uimanager.get_widget("/MenuBar/FileMenu/OpenRecentModelMenu").set_submenu(
@@ -583,10 +372,10 @@ class ProjectGui(object):
                 if action_group not in uimanager.get_action_groups():
                     uimanager.insert_action_group(action_group, -1)
                 widget_name = widget.get_name()
-                item_type = gtk.UI_MANAGER_MENUITEM
+                item_type = Gtk.UIManagerItemType.MENU
             else:
                 widget_name = name
-                item_type = gtk.UI_MANAGER_SEPARATOR
+                item_type = Gtk.UIManagerItemType.SEPARATOR
             uimanager.add_ui(merge_id, base_path, name, widget_name, item_type, False)
             if menu_key not in menu_merges:
                 menu_merges[menu_key] = []
@@ -608,90 +397,51 @@ class ProjectGui(object):
         self.settings.register_ui("file_menu", "Quit", self.gui.get_object("Quit"), 100)
         self.settings.register_ui("file_menu", "QuitSeparator", None, 95)
         self.settings.register_ui("main_window", "Main", self.menubar, -100)
-        # initialize plugins
-        self.plugin_manager = pycam.Plugins.PluginManager(core=self.settings)
-        self.plugin_manager.import_plugins()
-        # some more initialization
-        self.reset_preferences()
-        # TODO: preferences are not loaded until the new format is stable
-#       self.load_preferences()
-#       self.load_task_settings()
-        self.settings.register_event("notify-file-saved", self.add_to_recent_file_list)
-        self.settings.register_event("notify-file-opened", self.add_to_recent_file_list)
-        # Without this "gkt.main_iteration" loop the task settings file
-        # control would not be updated in time.
-        while gtk.events_pending():
-            gtk.main_iteration()
-        self.no_dialog = no_dialog
-        if not self.no_dialog:
-            # register a logging handler for displaying error messages
-            pycam.Utils.log.add_gtk_gui(self.window, logging.ERROR)
-            self.window.show()
-        self.settings.emit_event("notify-initialization-finished")
+        self.settings.set("set_last_filename", self.add_to_recent_file_list)
+        self._event_handlers.extend((
+            ("history-changed", self._update_undo_button),
+            ("model-change-after", "visual-item-updated"),
+            ("gui-disable", disable_gui),
+            ("gui-enable", enable_gui),
+            ("notify-file-saved", self.add_to_recent_file_list),
+            ("notify-file-opened", self.add_to_recent_file_list),
+        ))
+        for name, target in self._event_handlers:
+            self.settings.register_event(name, target)
+        # allow the task settings control to be updated
+        self.mainloop.update()
+        # register a logging handler for displaying error messages
+        pycam.Utils.log.add_gtk_gui(self.window, logging.ERROR)
+        self.window.show()
+        self.mainloop.update()
 
-    def gui_activity_guard(func):
-        def gui_activity_guard_wrapper(self, *args, **kwargs):
-            if self.gui_is_active:
-                return
-            self.gui_is_active = True
-            try:
-                result = func(self, *args, **kwargs)
-            except Exception:
-                # Catch possible exceptions (except system-exit ones) and
-                # report them.
-                log.error(pycam.Utils.get_exception_report())
-                result = None
-            self.gui_is_active = False
-            while self._batch_queue:
-                batch_func, batch_args, batch_kwargs = self._batch_queue[0]
-                del self._batch_queue[0]
-                batch_func(*batch_args, **batch_kwargs)
-            return result
-        return gui_activity_guard_wrapper
+    def get_question_response(self, question, default_response, allow_memorize=False):
+        """display a dialog presenting a simple question and yes/no buttons
 
-    def _store_undo_state(self):
-        # for now we only store the model
-        if not self.settings.get("models"):
-            return
-        # TODO: store all models
-        self._undo_states.append(pickle.dumps(self.settings.get("models")[0].model,
-                                              PICKLE_PROTOCOL))
-        log.debug("Stored the current state of the model for undo")
-        while len(self._undo_states) > MAX_UNDO_STATES:
-            self._undo_states.pop(0)
-        self.gui.get_object("UndoButton").set_sensitive(True)
-
-    def _restore_undo_state(self, widget=None, event=None):
-        if len(self._undo_states) > 0:
-            latest = StringIO.StringIO(self._undo_states.pop(-1))
-            model = pickle.Unpickler(latest).load()
-            self.load_model(model)
-            self.gui.get_object("UndoButton").set_sensitive(len(self._undo_states) > 0)
-            log.info("Restored the previous state of the model")
-            self.settings.emit_event("model-change-after")
+        @param allow_memorize: optionally a "Do not ask again" checkbox can be included
+        @returns aa tuple of two booleans ("is yes", "should memorize")
+        """
+        dialog = Gtk.MessageDialog(self.window, Gtk.DialogFlags.DESTROY_WITH_PARENT,
+                                   Gtk.MessageType.QUESTION, Gtk.ButtonsType.YES_NO, question)
+        if default_response:
+            dialog.set_default_response(Gtk.ResponseType.YES)
         else:
-            log.info("No previous undo state available - request ignored")
+            dialog.set_default_response(Gtk.ResponseType.NO)
+        memorize_choice = Gtk.CheckButton("Do not ask again")
+        if allow_memorize:
+            dialog.get_content_area().add(memorize_choice)
+            memorize_choice.show()
+        is_yes = (dialog.run() == Gtk.ResponseType.YES)
+        should_memorize = memorize_choice.get_active()
+        dialog.destroy()
+        return QuestionResponse(is_yes, should_memorize)
 
     def show_help(self, widget=None, page="Main_Page"):
         if not page.startswith("http"):
-            url = HELP_WIKI_URL % page
+            url = DOC_BASE_URL % page
         else:
             url = page
         webbrowser.open(url)
-
-    def set_model_filename(self, filename):
-        """ Store the given filename for a possible later "save model" action.
-        Additionally the window's title is adjusted and the "save" buttons are
-        updated.
-        """
-        uri = pycam.Utils.URIHandler(filename)
-        self.last_model_uri = uri
-        if not self.last_model_uri:
-            self.window.set_title("PyCAM")
-        else:
-            short_name = os.path.basename(uri.get_path())
-            self.window.set_title("%s - PyCAM" % short_name)
-        self.settings.emit_event("model-change-after")
 
     def _browse_external_program_location(self, widget=None, key=None):
         title = "Select the executable for '%s'" % key
@@ -743,83 +493,45 @@ class ProjectGui(object):
         # don't close the window - just hide it (for "delete-event")
         return True
 
-    @gui_activity_guard
-    def reset_preferences(self, widget=None):
-        """ reset all preferences to their default values """
-        for key, value in PREFERENCES_DEFAULTS.items():
-            self.settings.set(key, value)
-        # redraw the model due to changed colors, display items ...
-        self.settings.emit_event("model-change-after")
+    def _update_undo_button(self):
+        history = self.settings.get("history")
+        is_enabled = (history.get_undo_steps_count() > 0) if history else False
+        self.gui.get_object("UndoButton").set_sensitive(is_enabled)
 
-    def load_preferences(self):
-        """ load all settings that are available in the Preferences window from
-        a file in the user's home directory """
-        config_filename = pycam.Gui.Settings.get_config_filename()
-        if config_filename is None:
-            # failed to create the personal preferences directory
-            return
-        config = ConfigParser.ConfigParser()
-        if not config.read(config_filename):
-            # no config file was read
-            return
-        # report any ignored (obsolete) preference keys present in the file
-        for item, value in config.items("DEFAULT"):
-            if item not in PREFERENCES_DEFAULTS.keys():
-                log.warn("Skipping obsolete preference item: %s", str(item))
-        for item in PREFERENCES_DEFAULTS:
-            if not config.has_option("DEFAULT", item):
-                # a new preference setting is missing in the (old) file
-                continue
-            value_raw = config.get("DEFAULT", item)
-            value_type = type(PREFERENCES_DEFAULTS[item])
-            if hasattr(value_type(), "split"):
-                # keep strings as they are
-                value = str(value_raw)
-            else:
-                # parse tuples, integers, bools, ...
-                value = eval(value_raw)
-            self.settings.set(item, value)
+    def run_forever(self):
+        self._mainloop_is_running = True
+        # the main loop returns as soon "stop" is called
+        self.mainloop.run()
+        # in case we were interrupted: initiate a shutdown
+        self.settings.emit_event("mainloop-stop")
 
-    def save_preferences(self):
-        """ save all settings that are available in the Preferences window to
-        a file in the user's home directory """
-        config_filename = pycam.Gui.Settings.get_config_filename()
-        if config_filename is None:
-            # failed to create the personal preferences directory
-            log.warn("Failed to create a preferences directory in your user's home directory.")
-            return
-        config = ConfigParser.ConfigParser()
-        for item in PREFERENCES_DEFAULTS:
-            config.set("DEFAULT", item, self.settings.get(item))
-        try:
-            config_file = open(config_filename, "w")
-            config.write(config_file)
-            config_file.close()
-        except IOError as err_msg:
-            log.warn("Failed to write preferences file (%s): %s", config_filename, err_msg)
+    def stop(self):
+        if self._mainloop_is_running:
+            self.window.hide()
+            self._mainloop_is_running = False
+            self.mainloop.stop()
+        for name, target in self._event_handlers:
+            self.settings.unregister_event(name, target)
 
     def destroy(self, widget=None, data=None):
-        gtk.main_quit()
-        self.quit()
-
-    def quit(self):
-        pass
-        # TODO: disabled until the format is stable
-#       self.save_preferences()
+        # Our caller is supposed to call our "stop" method in this event handler, after everything
+        # is finished.
+        self.settings.emit_event("mainloop-stop")
 
     def configure_drag_and_drop(self, obj):
         obj.connect("drag-data-received", self.handle_data_drop)
-        flags = gtk.DEST_DEFAULT_ALL
-        targets = [(key, gtk.TARGET_OTHER_APP, index)
+        return  # FIXME
+        flags = Gtk.DestDefaults.ALL
+        targets = [(key, Gtk.TARGET_OTHER_APP, index)
                    for index, key in enumerate(FILENAME_DRAG_TARGETS)]
-        actions = (gtk.gdk.ACTION_COPY | gtk.gdk.ACTION_LINK | gtk.gdk.ACTION_DEFAULT
-                   | gtk.gdk.ACTION_PRIVATE | gtk.gdk.ACTION_ASK)
+        actions = (Gdk.ACTION_COPY | Gdk.ACTION_LINK | Gdk.ACTION_DEFAULT
+                   | Gdk.ACTION_PRIVATE | Gdk.ACTION_ASK)
         obj.drag_dest_set(flags, targets, actions)
 
     def handle_data_drop(self, widget, drag_context, x, y, selection_data, info, timestamp):
         if info != 0:
             uris = [str(selection_data.data)]
-        elif pycam.Utils.get_platform() == pycam.Utils.PLATFORM_WINDOWS:
+        elif pycam.Utils.get_platform() == pycam.Utils.OSPlatform.WINDOWS:
             uris = selection_data.data.splitlines()
         else:
             uris = selection_data.get_uris()
@@ -829,11 +541,10 @@ class ProjectGui(object):
         for uri in uris:
             if not uri or (uri == chr(0)):
                 continue
-            uri = pycam.Utils.URIHandler(uri)
-            file_type, importer = pycam.Importers.detect_file_type(uri, quiet=True)
-            if importer:
+            detected_filetype = pycam.Importers.detect_file_type(uri, quiet=True)
+            if detected_filetype:
                 # looks like the file can be loaded
-                if self.load_model_file(filename=uri):
+                if self.load_model_file(filename=detected_filetype.uri):
                     return True
         if len(uris) > 1:
             log.error("Failed to open any of the given models: %s", str(uris))
@@ -853,47 +564,11 @@ class ProjectGui(object):
             filename = self.settings.get("get_filename_func")("Loading model ...", mode_load=True,
                                                               type_filter=FILTER_MODEL)
         if filename:
-            file_type, importer = pycam.Importers.detect_file_type(filename)
-            if file_type and callable(importer):
-                progress = self.settings.get("progress")
-                progress.update(text="Loading model ...")
-                # "cancel" is not allowed
-                progress.disable_cancel()
-                model = importer(filename,
-                                 program_locations=get_all_program_locations(self.settings),
-                                 unit=self.settings.get("unit"),
-                                 fonts_cache=self.settings.get("fonts"),
-                                 callback=progress.update)
-                if self.load_model(model):
-                    if store_filename:
-                        self.set_model_filename(filename)
-                    self.add_to_recent_file_list(filename)
-                    result = True
-                else:
-                    result = False
-                progress.finish()
-                return result
-            else:
-                log.error("Failed to detect filetype!")
-                return False
-
-    def finish_startup(self):
-        """ This function is called by the pycam script after everything is
-        set up properly.
-        """
-        # empty the "undo" states (accumulated by loading the defualt model)
-        while self._undo_states:
-            self._undo_states.pop(0)
-
-    def load_model(self, model):
-        # load the new model only if the import worked
-        if model:
-            self.settings.emit_event("model-change-before")
-            self.settings.get("models").add_model(model)
-            self.last_model_uri = None
+            name_suggestion = os.path.splitext(os.path.basename(filename))[0]
+            model_params = {"source": {"type": "file", "location": filename}}
+            self.settings.get("models").add_model(model_params, name=name_suggestion)
+            self.add_to_recent_file_list(filename)
             return True
-        else:
-            return False
 
     def add_to_recent_file_list(self, filename):
         # Add the item to the recent files list - if it already exists.
@@ -905,7 +580,7 @@ class ProjectGui(object):
                 if self.recent_manager.has_item(uri.get_url()):
                     try:
                         self.recent_manager.remove_item(uri.get_url())
-                    except gobject.GError:
+                    except GObject.GError:
                         pass
                 self.recent_manager.add_item(uri.get_url())
             # store the directory of the last loaded file
@@ -921,21 +596,9 @@ class ProjectGui(object):
             result.append("%s %s" % (self.META_DATA_PREFIX, text))
         return os.linesep.join(result)
 
-    def mainloop(self):
-        # run the mainloop only if a GUI was requested
-        if not self.no_dialog:
-            gtk_settings = gtk.settings_get_default()
-            # force the icons to be displayed
-            gtk_settings.props.gtk_menu_images = True
-            gtk_settings.props.gtk_button_images = True
-            try:
-                gtk.main()
-            except KeyboardInterrupt:
-                self.quit()
-
 
 if __name__ == "__main__":
     GUI = ProjectGui()
     if len(sys.argv) > 1:
         GUI.load_model_file(sys.argv[1])
-    GUI.mainloop()
+    get_mainloop().run()

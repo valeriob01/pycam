@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-Copyright 2010 Lars Kruse <devel@sumpfralle.de>
+Copyright 2010-2018 Lars Kruse <devel@sumpfralle.de>
 Copyright 2008-2009 Lode Leroy
 
 This file is part of PyCAM.
@@ -24,6 +23,7 @@ import decimal
 import math
 
 import pycam.Utils.log
+
 _log = pycam.Utils.log.get_logger()
 
 
@@ -59,13 +59,80 @@ Point3D = collections.namedtuple("Point3D", ("x", "y", "z"))
 Vector3D = collections.namedtuple("Vector3D", ("x", "y", "z"))
 
 
-class Box3D(collections.namedtuple("Box3D", ("lower", "upper"))):
+class DimensionalObject:
+    """ mixin class for providing 3D objects with size information
+
+    At least the attributes min[xyz] and max[xyz] must be provided by the inheriting class.
+    """
+
+    __slots__ = ()
 
     def get_diagonal(self):
-        return Vector3D(*[high - low for low, high in zip(self.lower, self.upper)])
+        return Vector3D(self.maxx - self.minx, self.maxy - self.miny, self.maxz - self.minz)
 
     def get_center(self):
-        return Point3D(*[(low + high / 2) for low, high in zip(self.lower, self.upper)])
+        return Point3D((self.maxx + self.minx) / 2,
+                       (self.maxy + self.miny) / 2,
+                       (self.maxz + self.minz) / 2)
+
+    def get_dimensions(self):
+        return self.get_diagonal()
+
+
+class Box3D(collections.namedtuple("Box3D", ("lower", "upper")), DimensionalObject):
+
+    __slots__ = ()
+
+    @property
+    def minx(self):
+        return self.lower.x
+
+    @property
+    def miny(self):
+        return self.lower.y
+
+    @property
+    def minz(self):
+        return self.lower.z
+
+    @property
+    def maxx(self):
+        return self.upper.x
+
+    @property
+    def maxy(self):
+        return self.upper.y
+
+    @property
+    def maxz(self):
+        return self.upper.z
+
+    def to_x3d(self, color):
+        # avoid circular imports by importing late
+        from pycam.Utils.x3d import get_x3d_line
+        minx, miny, minz = self.lower
+        maxx, maxy, maxz = self.upper
+        p1 = (minx, miny, minz)
+        p2 = (minx, maxy, minz)
+        p3 = (maxx, maxy, minz)
+        p4 = (maxx, miny, minz)
+        p5 = (minx, miny, maxz)
+        p6 = (minx, maxy, maxz)
+        p7 = (maxx, maxy, maxz)
+        p8 = (maxx, miny, maxz)
+        # all combinations of neighbouring corners
+        line_sets = []
+        # lower rectangle
+        line_sets.append((p1, p2, p3, p4, p1))
+        # upper rectangle
+        line_sets.append((p5, p6, p7, p8, p5))
+        # vertical connections
+        line_sets.append((p1, p5))
+        line_sets.append((p2, p6))
+        line_sets.append((p3, p7))
+        line_sets.append((p4, p8))
+        for line_set in line_sets:
+            yield from get_x3d_line(line_set, color)
 
 
 def _id_generator():
@@ -75,7 +142,7 @@ def _id_generator():
         current_id += 1
 
 
-class IDGenerator(object):
+class IDGenerator:
 
     __id_gen_func = _id_generator()
 
@@ -83,7 +150,7 @@ class IDGenerator(object):
         self.id = next(self.__id_gen_func)
 
 
-class TransformableContainer(object):
+class TransformableContainer(DimensionalObject):
     """ a base class for geometrical objects containing other elements
 
     This class is mainly used for simplifying model transformations in a
@@ -143,7 +210,7 @@ class TransformableContainer(object):
     def __iter__(self):
         return self
 
-    def next(self):
+    def __next__(self):
         raise NotImplementedError(("'%s' is a subclass of 'TransformableContainer' but it fails "
                                    "to implement the 'next' generator") % str(type(self)))
 

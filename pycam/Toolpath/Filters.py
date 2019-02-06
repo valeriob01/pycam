@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2012 Lars Kruse <devel@sumpfralle.de>
 
@@ -19,6 +18,7 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 
+import collections
 import decimal
 
 from pycam.Geometry import epsilon
@@ -72,13 +72,14 @@ def get_filtered_moves(moves, filters):
     return moves
 
 
-class BaseFilter(object):
+class BaseFilter:
 
     PARAMS = []
     WEIGHT = 50
 
     def __init__(self, *args, **kwargs):
-        self.settings = dict(kwargs)
+        # we want to achieve a stable order in order to be hashable
+        self.settings = collections.OrderedDict(kwargs)
         # fail if too many arguments (without names) are given
         if len(args) > len(self.PARAMS):
             raise ValueError("Too many parameters: %d (expected: %d)"
@@ -95,6 +96,9 @@ class BaseFilter(object):
 
     def clone(self):
         return self.__class__(**self.settings)
+
+    def __hash__(self):
+        return hash((str(self.__class__), tuple(self.settings.items())))
 
     def __ror__(self, toolpath):
         # allow to use pycam.Toolpath.Toolpath instances (instead of a list)
@@ -140,7 +144,8 @@ class SafetyHeight(BaseFilter):
                 safety_pending = True
             elif step.action in MOVES_LIST:
                 new_pos = tuple(step.position)
-                max_height = max(max_height, new_pos[2])
+                if (max_height is None) or (new_pos[2] > max_height):
+                    max_height = new_pos[2]
                 if not last_pos:
                     # there was a safety move (or no move at all) before
                     # -> move sideways
@@ -193,7 +198,7 @@ class MachineSetting(BaseFilter):
         return "%s=%s" % (self.settings["key"], self.settings["value"])
 
 
-class PathMode(MachineSetting):
+class CornerStyle(MachineSetting):
 
     PARAMS = ("path_mode", "motion_tolerance", "naive_tolerance")
     WEIGHT = 25
@@ -204,7 +209,7 @@ class PathMode(MachineSetting):
                   self.settings["naive_tolerance"]))]
 
     def _render_settings(self):
-        return "%d / %d / %d" % (self.settings["path_mode"],
+        return "%s / %d / %d" % (self.settings["path_mode"],
                                  self.settings["motion_tolerance"],
                                  self.settings["naive_tolerance"])
 
@@ -225,18 +230,25 @@ class SelectTool(BaseFilter):
 
 
 class TriggerSpindle(BaseFilter):
+    """ control the spindle spin for each tool selection
+
+    A spin-up command is added after each tool selection.
+    A spin-down command is added before each tool selection and after the last move.
+    If no tool selection is found, then single spin-up and spin-down commands are added before the
+    first move and after the last move.
+    """
 
     PARAMS = ("delay", )
-    WEIGHT = 40
+    WEIGHT = 36
 
     def filter_toolpath(self, toolpath):
-        def enable_spindle(path, index):
+        def spin_up(path, index):
             path.insert(index, ToolpathSteps.MachineSetting("spindle_enabled", True))
             if self.settings["delay"]:
                 path.insert(index + 1, ToolpathSteps.MachineSetting("delay",
                                                                     self.settings["delay"]))
 
-        def disable_spindle(path, index):
+        def spin_down(path, index):
             path.insert(index, ToolpathSteps.MachineSetting("spindle_enabled", False))
 
         # find all positions of "select_tool"
@@ -245,19 +257,53 @@ class TriggerSpindle(BaseFilter):
         if tool_changes:
             tool_changes.reverse()
             for index in tool_changes:
-                enable_spindle(toolpath, index + 1)
+                spin_up(toolpath, index + 1)
+                if index > 0:
+                    # add a "disable"
+                    spin_down(toolpath, index)
         else:
-            # add a single tool selection before the first move
+            # add a single spin-up before the first move
             for index, step in enumerate(toolpath):
                 if step.action in MOVES_LIST:
-                    enable_spindle(toolpath, index)
+                    spin_up(toolpath, index)
                     break
         # add "stop spindle" just after the last move
         index = len(toolpath) - 1
         while (toolpath[index].action not in MOVES_LIST) and (index > 0):
             index -= 1
         if toolpath[index].action in MOVES_LIST:
-            disable_spindle(toolpath, index + 1)
+            spin_down(toolpath, index + 1)
+        return toolpath
+
+
+class SpindleSpeed(BaseFilter):
+    """ add a spindle speed command after each tool selection
+
+    If no tool selection is found, then a single spindle speed command is inserted before the first
+    move.
+    """
+
+    PARAMS = ("speed", )
+    WEIGHT = 37
+
+    def filter_toolpath(self, toolpath):
+        def set_speed(path, index):
+            path.insert(index, ToolpathSteps.MachineSetting("spindle_speed",
+                                                            self.settings["speed"]))
+
+        # find all positions of "select_tool"
+        tool_changes = [index for index, step in enumerate(toolpath)
+                        if (step.action == MACHINE_SETTING) and (step.key == "select_tool")]
+        if tool_changes:
+            tool_changes.reverse()
+            for index in tool_changes:
+                set_speed(toolpath, index + 1)
+        else:
+            # no tool selections: add a single spindle speed command before the first move
+            for index, step in enumerate(toolpath):
+                if step.action in MOVES_LIST:
+                    set_speed(toolpath, index)
+                    break
         return toolpath
 
 
@@ -454,7 +500,7 @@ def _get_num_converter(step_width):
 
 class StepWidth(BaseFilter):
 
-    PARAMS = ("step_width_x", "step_width_y", "step_width_z")
+    PARAMS = ("step_width", )
     NUM_OF_AXES = 3
     WEIGHT = 60
 
@@ -462,7 +508,7 @@ class StepWidth(BaseFilter):
         minimum_steps = []
         conv = []
         for key in "xyz":
-            minimum_steps.append(self.settings["step_width_%s" % key])
+            minimum_steps.append(self.settings["step_width"][key])
         for step_width in minimum_steps:
             conv.append(_get_num_converter(step_width)[0])
         last_pos = None
@@ -470,19 +516,34 @@ class StepWidth(BaseFilter):
         for step in toolpath:
             if step.action in MOVES_LIST:
                 if last_pos:
+                    real_target_position = []
                     diff = [(abs(a_conv(a_last_pos) - a_conv(a_pos)))
                             for a_conv, a_last_pos, a_pos in zip(conv, last_pos, step.position)]
-                    if all([d < lim for d, lim in zip(diff, minimum_steps)]):
-                        # too close: ignore this move
+                    position_changed = False
+                    # For every axis: if the new position is closer than the defined step width,
+                    # then stay at the previous position.
+                    # see https://sf.net/p/pycam/discussion/860184/thread/930b1c7f/
+                    for axis_distance, min_distance, axis_last, axis_wanted in zip(
+                            diff, minimum_steps, last_pos, step.position):
+                        if axis_distance >= min_distance:
+                            real_target_position.append(axis_wanted)
+                            position_changed = True
+                        else:
+                            real_target_position.append(axis_last)
+                    if not position_changed:
+                        # The limitiation was not exceeded for any axis.
                         continue
+                else:
+                    real_target_position = step.position
                 # TODO: this would also change the GCode output - we want
                 # this, but it sadly breaks other code pieces that rely on
                 # floats instead of decimals at this point. The output
                 # conversion needs to move into the GCode output hook.
 #               destination = [a_conv(a_pos) for a_conv, a_pos in zip(conv, step.position)]
-                destination = step.position
+                destination = real_target_position
                 path.append(ToolpathSteps.get_step_class_by_action(step.action)(destination))
-                last_pos = step.position
+                # We store the real machine position (instead of the "wanted" position).
+                last_pos = real_target_position
             else:
                 # forget "last_pos" - we don't know what happened in between
                 last_pos = None

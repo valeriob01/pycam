@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008 Lode Leroy
 
@@ -18,22 +17,18 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import enum
 import os
 import re
 import socket
 import sys
 import traceback
 import urllib
-import urlparse
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 # this is imported below on demand
 # import win32com
 # import win32api
-
-
-PLATFORM_LINUX = 0
-PLATFORM_WINDOWS = 1
-PLATFORM_MACOS = 2
-PLATFORM_UNKNOWN = 3
 
 
 # setproctitle is (optionally) imported
@@ -44,15 +39,44 @@ except ImportError:
     setproctitle = lambda name: None
 
 
+__application_key = []
+
+
+class OSPlatform(enum.IntEnum):
+    LINUX = 0
+    WINDOWS = 1
+    MACOS = 2
+    UNKNOWN = 3
+
+
 def get_platform():
     if hasattr(sys, "getwindowsversion"):
-        return PLATFORM_WINDOWS
+        return OSPlatform.WINDOWS
     elif sys.platform == "darwin":
-        return PLATFORM_MACOS
+        return OSPlatform.MACOS
     elif sys.platform.startswith("linux"):
-        return PLATFORM_LINUX
+        return OSPlatform.LINUX
     else:
-        return PLATFORM_UNKNOWN
+        return OSPlatform.UNKNOWN
+
+
+def get_type_name(instance):
+    return type(instance).__name__
+
+
+def set_application_key(key):
+    while __application_key:
+        __application_key.pop()
+    __application_key.append(key)
+
+
+def get_application_key():
+    """ get the somehow unique name of the running application
+
+    This application key can be used to distinguish application-specific namespaces in the data
+    storage (e.g. "pycam-gtk" or "pycam-cli").
+    """
+    return __application_key[0] if __application_key else None
 
 
 def get_case_insensitive_file_pattern(pattern):
@@ -87,10 +111,7 @@ def get_non_conflicting_name(template, conflicts, start=None, get_next_func=None
         @returns: a usable name that was not found in "conflicts"
         @rtype: basestr
     """
-    if start is None:
-        index = len(conflicts) + 1
-    else:
-        index = start
+    index = 1 if start is None else start
     if get_next_func is None:
         get_next_func = lambda current: current + 1
     while (template % index) in conflicts:
@@ -98,7 +119,7 @@ def get_non_conflicting_name(template, conflicts, start=None, get_next_func=None
     return template % index
 
 
-class URIHandler(object):
+class URIHandler:
 
     DEFAULT_PREFIX = "file://"
 
@@ -116,15 +137,15 @@ class URIHandler(object):
         if isinstance(location, URIHandler):
             self._uri = location._uri
         elif not location:
-            self._uri = urlparse.urlparse(self.DEFAULT_PREFIX)
-        elif (get_platform() == PLATFORM_WINDOWS) and (location[1:3] == ":\\"):
-            self._uri = urlparse.urlparse(self.DEFAULT_PREFIX + location.replace("\\", "/"))
+            self._uri = urlparse(self.DEFAULT_PREFIX)
+        elif (get_platform() == OSPlatform.WINDOWS) and (location[1:3] == ":\\"):
+            self._uri = urlparse(self.DEFAULT_PREFIX + location.replace("\\", "/"))
         else:
-            self._uri = urlparse.urlparse(location)
+            self._uri = urlparse(location)
             if not self._uri.scheme:
                 # always fill the "scheme" field - some functions expect this
-                self._uri = urlparse.urlparse(self.DEFAULT_PREFIX
-                                              + os.path.realpath(os.path.abspath(location)))
+                self._uri = urlparse(self.DEFAULT_PREFIX
+                                     + os.path.realpath(os.path.abspath(location)))
 
     def is_local(self):
         return bool(self and (not self._uri.scheme or (self._uri.scheme == "file")))
@@ -137,11 +158,11 @@ class URIHandler(object):
 
     def get_path(self):
         encoded_path = self._uri.path
-        if get_platform() == PLATFORM_WINDOWS:
+        if get_platform() == OSPlatform.WINDOWS:
             # prepend "netloc" (the drive letter - e.g. "c:")
             encoded_path = self._uri.netloc + encoded_path
         # decode all special characters like "%20" and replace "/" with "\\" (Windows)
-        return urllib.url2pathname(encoded_path)
+        return url2pathname(encoded_path)
 
     def get_url(self):
         return self._uri.geturl()
@@ -225,7 +246,7 @@ def get_all_ips():
 
 
 def get_exception_report():
-    return ("An unexpected exception occoured: please send the text below to the developers of "
+    return ("An unexpected exception occurred: please send the text below to the developers of "
             "PyCAM. Thanks a lot!" + os.linesep + traceback.format_exc())
 
 
@@ -234,7 +255,76 @@ def print_stack_trace():
     traceback.print_stack()
 
 
-class ProgressCounter(object):
+class MultiLevelDictionaryAccess:
+    """ translate a single- or multi-level dictionary access key into a target dict and key """
+
+    def __init__(self, base_dictionary):
+        self._data = base_dictionary
+
+    def get_value(self, key_or_keys):
+        source_dict, source_key = self._get_recursive_access(key_or_keys, create_if_missing=False)
+        return source_dict[source_key]
+
+    def set_value(self, key_or_keys, value):
+        target_dict, target_key = self._get_recursive_access(key_or_keys, create_if_missing=True)
+        target_dict[target_key] = value
+
+    def apply_recursive_item_modification(self, test_should_apply, func_get_modified,
+                                          current_keys=None):
+        """ modify every item in a multi-level dictionary
+
+        @param test_should_apply: callable expecting a single parameter (a value) and returning
+            True, if the value is supposed to be modified
+        @param func_get_modified: callable expecting a single parameter (a value) and returning the
+            modified value
+        """
+        if current_keys is None:
+            current_keys = ()
+            target_dict = self._data
+        else:
+            target_dict = self.get_value(current_keys)
+        for key, value in target_dict.items():
+            this_item_keys = current_keys + (key, )
+            if test_should_apply(value):
+                self.set_value(this_item_keys, func_get_modified(value))
+            if isinstance(value, dict):
+                self.apply_recursive_item_modification(test_should_apply, func_get_modified,
+                                                       current_keys=this_item_keys)
+
+    def _get_recursive_access(self, key_or_keys, create_if_missing=False):
+        """
+        @param base_dictionary: the dictionary containing the data to be accessed
+        @param key: string (single level access) or tuple of strings (multi level access)
+        @param create_if_missing: create nested dictionaries if necessary
+        @returns: tuple of (dict, str) for accessing the dictionary containing the target item
+
+        @raises:
+            - KeyError: if one part of the access chain is missing and "create_if_missing" is False
+            - TypeError: if one part of the access chain is not a dictionary
+        """
+        if isinstance(key_or_keys, tuple):
+            # multi-level dictionary access
+            keys = key_or_keys
+        else:
+            # single-level dictionary access
+            keys = [key_or_keys]
+        # recursively access the single- or multi-level target dictionary
+        target_dict = self._data
+        for key in keys[:-1]:
+            if key not in target_dict:
+                if create_if_missing:
+                    target_dict[key] = {}
+                else:
+                    raise KeyError("Key in sub-dictionary is missing: {}".format(key))
+            # enter the next level
+            target_dict = target_dict[key]
+            if not isinstance(target_dict, dict):
+                raise TypeError("Invalid multi-level parameter set access key: {}"
+                                .format(key_or_keys))
+        return target_dict, keys[-1]
+
+
+class ProgressCounter:
 
     def __init__(self, max_value, update_callback):
         if max_value <= 0:

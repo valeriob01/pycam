@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -20,8 +19,6 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 
 import datetime
 
-import gobject
-
 import pycam.Gui.common
 import pycam.Plugins
 
@@ -29,8 +26,8 @@ import pycam.Plugins
 class ToolpathSimulation(pycam.Plugins.PluginBase):
 
     UI_FILE = "toolpath_simulation.ui"
-    DEPENDS = ["Toolpaths", "OpenGLViewToolpath"]
-    CATEGORIES = ["Toolpath"]
+    DEPENDS = {"Toolpaths", "VisualizeToolpath"}
+    CATEGORIES = {"Toolpath"}
 
     def setup(self):
         self._running = None
@@ -59,15 +56,15 @@ class ToolpathSimulation(pycam.Plugins.PluginBase):
             self.register_event_handlers(self._event_handlers)
             self.register_gtk_handlers(self._gtk_handlers)
             self._update_visibility()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
-            del self.core["show_simulation"]
-            self.core.unregister_ui("toolpath_handling", self._frame)
-            self.core.unregister_event("visualize-items", self.show_simulation)
             self.unregister_event_handlers(self._event_handlers)
             self.unregister_gtk_handlers(self._gtk_handlers)
+            del self.core["show_simulation"]
+            self.core.unregister_ui("toolpath_handling", self._frame)
+        super().teardown()
 
     def _update_visibility(self):
         toolpaths = self.core.get("toolpaths").get_selected()
@@ -89,18 +86,18 @@ class ToolpathSimulation(pycam.Plugins.PluginBase):
                 # this should not happen
                 return
             # we use only one toolpath
-            self._toolpath = toolpaths[0]
+            self._toolpath = toolpaths[0].get_toolpath()
             # calculate duration (in seconds)
             self._duration = 60 * self._toolpath.get_machine_move_distance_and_time()[1]
             self._progress.set_upper(self._duration)
             self._progress.set_value(0)
             self._toolpath_moves = None
             self.core.set("show_simulation", True)
-            self.core.set("current_tool", self._toolpath.tool)
+            self.core.set("current_tool", self._toolpath.tool.get_tool_geometry())
             self._running = True
             interval_ms = int(1000 / self.core.get("tool_progress_max_fps"))
             pycam.Gui.common.set_parent_controls_sensitivity(self._frame, False)
-            gobject.timeout_add(interval_ms, self._next_timestep)
+            self._gobject.timeout_add(interval_ms, self._next_timestep)
         else:
             self._running = True
         self._start_button.set_sensitive(False)

@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
 """
-Copyright 2010 Lars Kruse <devel@sumpfralle.de>
+Copyright 2010-2018 Lars Kruse <devel@sumpfralle.de>
 
 This file is part of PyCAM.
 
@@ -18,12 +17,17 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import contextlib
 import os
 import sys
+import tempfile
+import urllib.request
 
+import pycam.Utils
 import pycam.Utils.log
 
 
+APP_NAME = "pycam"
 DATA_DIR_ENVIRON_KEY = "PYCAM_DATA_DIR"
 FONT_DIR_ENVIRON_KEY = "PYCAM_FONT_DIR"
 
@@ -36,9 +40,9 @@ if "_MEIPASS2" in os.environ:
 
 # lookup list of directories for UI files, fonts, ...
 DATA_BASE_DIRS = [os.path.join(PROJECT_BASE_DIR, "share"),
-                  os.path.join(PROJECT_BASE_DIR, "share", "pycam"),
-                  os.path.join(sys.prefix, "local", "share", "pycam"),
-                  os.path.join(sys.prefix, "share", "pycam"), '.']
+                  os.path.join(PROJECT_BASE_DIR, "share", APP_NAME),
+                  os.path.join(sys.prefix, "local", "share", APP_NAME),
+                  os.path.join(sys.prefix, "share", APP_NAME), '.']
 FONTS_SUBDIR = "fonts"
 UI_SUBDIR = "ui"
 
@@ -59,8 +63,12 @@ def get_ui_file_location(filename, silent=False):
     return get_data_file_location(os.path.join(UI_SUBDIR, filename), silent=silent)
 
 
-def get_data_file_location(filename, silent=False):
-    for base_dir in DATA_BASE_DIRS:
+def get_data_file_location(filename, silent=False, priority_directories=None):
+    if priority_directories is None:
+        scan_dirs = DATA_BASE_DIRS
+    else:
+        scan_dirs = tuple(priority_directories) + tuple(DATA_BASE_DIRS)
+    for base_dir in scan_dirs:
         test_path = os.path.join(base_dir, filename)
         if os.path.exists(test_path):
             return test_path
@@ -103,7 +111,7 @@ def get_external_program_location(key):
         if location:
             return location
     except Exception:
-        # Wildcard (non-system exiting) exeception to match "ImportError" and
+        # Wildcard (non-system exiting) exception to match "ImportError" and
         # "pywintypes.error" (for "not found").
         pass
     # go through the PATH environment variable
@@ -143,3 +151,84 @@ def get_all_program_locations(core):
         if key.startswith(prefix) and core[key]:
             program_locations[key[len(prefix):]] = core[key]
     return program_locations
+
+
+@contextlib.contextmanager
+def open_file_context(filename, mode, is_text):
+    if isinstance(filename, pycam.Utils.URIHandler):
+        filename = filename.get_path()
+    if filename is None:
+        raise OSError("missing filename")
+    if mode == "r":
+        opened_file = open(filename, "r")
+    elif mode == "w":
+        handle, temp_filename = tempfile.mkstemp(prefix=os.path.basename(filename) + ".",
+                                                 dir=os.path.dirname(filename), text=is_text)
+        opened_file = os.fdopen(handle, mode=mode)
+    else:
+        raise ValueError("Invalid 'mode' given: {}".format(mode))
+    try:
+        yield opened_file
+    finally:
+        opened_file.close()
+    if mode == "w":
+        os.rename(temp_filename, filename)
+
+
+@contextlib.contextmanager
+def create_named_temporary_file(suffix=None):
+    file_handle, filename = tempfile.mkstemp(suffix=".dxf")
+    os.close(file_handle)
+    try:
+        yield filename
+    finally:
+        if os.path.isfile(filename):
+            try:
+                os.remove(filename)
+            except OSError as exc:
+                log.warn("Failed to remove temporary file (%s): %s", filename, exc)
+
+
+def get_cache_directory():
+    """ determine and create a directory for storing cached files
+
+    @throws OSError
+    """
+    try:
+        from win32com.shell import shellcon, shell
+        cache_base_dir = shell.SHGetFolderPath(0, shellcon.CSIDL_INTERNET_CACHE, 0, 0)
+    except ImportError:
+        # see https://specifications.freedesktop.org/basedir-spec/basedir-spec-0.7.html#variables
+        cache_base_dir = os.getenv("XDG_CACHE_HOME",
+                                   os.path.join(os.path.expanduser("~"), ".cache"))
+    cache_dir = os.path.join(cache_base_dir, APP_NAME)
+    if not os.path.exists(cache_dir):
+        # this may throw OSError
+        os.makedirs(cache_dir)
+    return cache_dir
+
+
+def retrieve_cached_download(storage_filename, download_url):
+    """ retrieve the full filename of a locally cached download
+
+    @throws OSError in case of any problems (download or data storage)
+    @returns absolute filename
+    """
+    # this may raise an OSError
+    cache_dir = get_cache_directory()
+    full_filename = os.path.join(cache_dir, storage_filename)
+    if os.path.exists(full_filename):
+        log.debug("Use cached file (%s) instead of downloading '%s'", full_filename, download_url)
+    else:
+        log.info("Downloading '%s' to '%s'", download_url, full_filename)
+        # download the file
+        temporary_filename = full_filename + ".part"
+        # remove the file if it was left there in a previous attempt
+        try:
+            os.remove(temporary_filename)
+        except OSError:
+            pass
+        # this may raise an HTTP-related error (inherited from OSError)
+        urllib.request.urlretrieve(download_url, temporary_filename)
+        os.rename(temporary_filename, full_filename)
+    return full_filename

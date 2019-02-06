@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008-2010 Lode Leroy
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
@@ -27,7 +26,7 @@ from pycam.Geometry.Matrix import TRANSFORMATIONS
 from pycam.Geometry.Line import Line
 from pycam.Geometry.Plane import Plane
 from pycam.Geometry.Polygon import Polygon
-from pycam.Geometry.PointUtils import pcross, pdist, pnorm, pnormalized, psub
+from pycam.Geometry.PointUtils import pcross, pdist, pmul, pnorm, pnormalized, psub
 from pycam.Geometry.Triangle import Triangle
 from pycam.Geometry.TriangleKdtree import TriangleKdtree
 from pycam.Toolpath import Bounds
@@ -40,17 +39,17 @@ def get_combined_bounds(models):
     low = [None, None, None]
     high = [None, None, None]
     for model in models:
-        if (low[0] is None) or (model.minx < low[0]):
+        if (low[0] is None) or ((model.minx is not None) and (model.minx < low[0])):
             low[0] = model.minx
-        if (low[1] is None) or (model.miny < low[1]):
+        if (low[1] is None) or ((model.miny is not None) and (model.miny < low[1])):
             low[1] = model.miny
-        if (low[2] is None) or (model.minz < low[2]):
+        if (low[2] is None) or ((model.minz is not None) and (model.minz < low[2])):
             low[2] = model.minz
-        if (high[0] is None) or (model.maxx > high[0]):
+        if (high[0] is None) or ((model.maxx is not None) and (model.maxx > high[0])):
             high[0] = model.maxx
-        if (high[1] is None) or (model.maxy > high[1]):
+        if (high[1] is None) or ((model.maxy is not None) and (model.maxy > high[1])):
             high[1] = model.maxy
-        if (high[2] is None) or (model.maxz > high[2]):
+        if (high[2] is None) or ((model.maxz is not None) and (model.maxz > high[2])):
             high[2] = model.maxz
     if None in low or None in high:
         return None
@@ -72,7 +71,7 @@ def get_combined_model(models):
 class BaseModel(IDGenerator, TransformableContainer):
 
     def __init__(self):
-        super(BaseModel, self).__init__()
+        super().__init__()
         self._item_groups = []
         self.name = "model%d" % self.id
         self.minx = None
@@ -97,7 +96,7 @@ class BaseModel(IDGenerator, TransformableContainer):
         """
         return sum([len(igroup) for igroup in self._item_groups])
 
-    def next(self):
+    def __next__(self):
         for item_group in self._item_groups:
             for item in item_group:
                 if isinstance(item, list):
@@ -155,10 +154,6 @@ class BaseModel(IDGenerator, TransformableContainer):
         for item in items:
             self.append(item)
 
-    def maxsize(self):
-        return max(abs(self.maxx), abs(self.minx), abs(self.maxy), abs(self.miny), abs(self.maxz),
-                   abs(self.minz))
-
     def subdivide(self, depth):
         model = self.__class__()
         for item in next(self):
@@ -200,6 +195,24 @@ class BaseModel(IDGenerator, TransformableContainer):
         matrix = ((scale_x, 0, 0, 0), (0, scale_y, 0, 0), (0, 0, scale_z, 0))
         self.transform_by_matrix(matrix, callback=self._get_progress_callback(callback))
 
+    def _shift_to_origin(self, position, callback=None):
+        if position != Point3D(0, 0, 0):
+            self.shift(*(pmul(position, -1)), callback=callback)
+
+    def _shift_origin_to(self, position, callback=None):
+        if position != Point3D(0, 0, 0):
+            self.shift(*position, callback=callback)
+
+    def rotate(self, center, axis_vector, angle, callback=None):
+        # shift the model to the rotation center
+        self._shift_to_origin(center, callback=callback)
+        # rotate the model
+        matrix = pycam.Geometry.Matrix.get_rotation_matrix_axis_angle(axis_vector, angle,
+                                                                      use_radians=False)
+        self.transform_by_matrix(matrix, callback=callback)
+        # shift the model back to its original position
+        self._shift_origin_to(center, callback=callback)
+
     def get_bounds(self):
         return Bounds(Bounds.TYPE_CUSTOM, Box3D(Point3D(self.minx, self.miny, self.minz),
                                                 Point3D(self.maxx, self.maxy, self.maxz)))
@@ -209,7 +222,7 @@ class Model(BaseModel):
 
     def __init__(self, use_kdtree=True):
         import pycam.Exporters.STLExporter
-        super(Model, self).__init__()
+        super().__init__()
         self._triangles = []
         self._item_groups.append(self._triangles)
         self._export_function = pycam.Exporters.STLExporter.STLExporter
@@ -218,7 +231,6 @@ class Model(BaseModel):
         # enable/disable kdtree
         self._use_kdtree = use_kdtree
         self._t_kdtree = None
-        self.__flat_groups_cache = {}
         self.__uuid = None
 
     def __len__(self):
@@ -226,6 +238,9 @@ class Model(BaseModel):
         This is mainly useful for evaluating an empty model as False.
         """
         return len(self._triangles)
+
+    def __iter__(self):
+        yield from self._triangles
 
     def copy(self):
         result = self.__class__(use_kdtree=self._use_kdtree)
@@ -240,14 +255,14 @@ class Model(BaseModel):
         return self.__uuid
 
     def append(self, item):
-        super(Model, self).append(item)
+        super().append(item)
         if isinstance(item, Triangle):
             self._triangles.append(item)
             # we assume, that the kdtree needs to be rebuilt again
             self._dirty = True
 
     def reset_cache(self):
-        super(Model, self).reset_cache()
+        super().reset_cache()
         # the triangle kdtree needs to be reset after transforming the model
         self._update_caches()
 
@@ -255,7 +270,6 @@ class Model(BaseModel):
         if self._use_kdtree:
             self._t_kdtree = TriangleKdtree(self.triangles())
         self.__uuid = str(uuid.uuid4())
-        self.__flat_groups_cache = {}
         # the kdtree is up-to-date again
         self._dirty = False
 
@@ -267,7 +281,7 @@ class Model(BaseModel):
             # update the kdtree, if new triangles were added meanwhile
             if self._dirty:
                 self._update_caches()
-            return self._t_kdtree.Search(minx, maxx, miny, maxy)
+            return self._t_kdtree.search(minx, maxx, miny, maxy)
         return self._triangles
 
     def get_waterline_contour(self, plane, callback=None):
@@ -294,56 +308,28 @@ class Model(BaseModel):
                   [len(p.get_lines()) for p in contour.get_polygons()])
         return contour
 
-    def get_flat_areas(self, min_area=None):
-        """ Find plane areas (combinations of triangles) bigger than 'min_area'
-        and ignore vertical planes. The result is cached.
-        """
-        if min_area not in self.__flat_groups_cache:
-            def has_shared_edge(t1, t2):
-                count = 0
-                for p in (t1.p1, t1.p2, t1.p3):
-                    if p in (t2.p1, t2.p2, t2.p3):
-                        count += 1
-                return count >= 2
-
-            groups = []
-            for t in self.triangles():
-                # Find all groups with the same direction (see 'normal') that
-                # share at least one edge with the current triangle.
-                touch_groups = []
-                if t.normal[2] == 0:
-                    # ignore vertical triangles
-                    continue
-                for group_index, group in enumerate(groups):
-                    if t.normal == group[0].normal:
-                        for group_t in group:
-                            if has_shared_edge(t, group_t):
-                                touch_groups.append(group_index)
-                                break
-                if len(touch_groups) > 1:
-                    # combine multiple areas with this new triangle
-                    touch_groups.reverse()
-                    combined = [t]
-                    for touch_group_index in touch_groups:
-                        combined.extend(groups.pop(touch_group_index))
-                    groups.append(combined)
-                elif len(touch_groups) == 1:
-                    groups[touch_groups[0]].append(t)
-                else:
-                    groups.append([t])
-            # check the size of each area
-            if min_area is not None:
-                groups = [group for group in groups
-                          if sum([t.get_area() for t in group]) >= min_area]
-            self.__flat_groups_cache[min_area] = groups
-        return self.__flat_groups_cache[min_area]
+    def to_x3d(self, color):
+        yield "<Shape>"
+        yield "<Appearance>"
+        yield ('<Material diffuseColor="{:f} {:f} {:f}" transparency="{:f}" />'
+               .format(color["red"], color["green"], color["blue"], 1 - color["alpha"]))
+        yield "</Appearance>"
+        yield "<TriangleSet>"
+        yield '<Coordinate point="'
+        for triangle in self:
+            p1, p2, p3 = triangle.get_points()
+            # use the proper direction in order to let normals point outwards
+            yield " ".join("{:f} {:f} {:f}".format(*point) for point in (p1, p3, p2))
+        yield '"/>'
+        yield "</TriangleSet>"
+        yield "</Shape>"
 
 
 class ContourModel(BaseModel):
 
     def __init__(self, plane=None):
         import pycam.Exporters.SVGExporter
-        super(ContourModel, self).__init__()
+        super().__init__()
         self.name = "contourmodel%d" % self.id
         if plane is None:
             # the default plane points upwards along the z axis
@@ -354,7 +340,6 @@ class ContourModel(BaseModel):
         # there is always just one plane
         self._plane_groups = [self._plane]
         self._item_groups.append(self._plane_groups)
-        self._cached_offset_models = {}
         self._export_function = pycam.Exporters.SVGExporter.SVGExporterContourModel
 
     def __len__(self):
@@ -363,16 +348,14 @@ class ContourModel(BaseModel):
         """
         return len(self._line_groups)
 
+    def __iter__(self):
+        yield from self.get_polygons()
+
     def copy(self):
         result = self.__class__(plane=self._plane.copy())
         for polygon in self.get_polygons():
             result.append(polygon.copy())
         return result
-
-    def reset_cache(self):
-        super(ContourModel, self).reset_cache()
-        # reset the offset model cache
-        self._cached_offset_models = {}
 
     def _merge_polygon_if_possible(self, other_polygon, allow_reverse=False):
         """ Check if the given 'other_polygon' can be connected to another
@@ -443,7 +426,7 @@ class ContourModel(BaseModel):
                 return
 
     def append(self, item, unify_overlaps=False, allow_reverse=False):
-        super(ContourModel, self).append(item)
+        super().append(item)
         if isinstance(item, Line):
             item_list = [item]
             if allow_reverse:
@@ -523,9 +506,6 @@ class ContourModel(BaseModel):
             # ignore any non-supported items (they are probably handled by a
             # parent class)
             pass
-
-    def get_num_of_lines(self):
-        return sum([len(group) for group in self._line_groups])
 
     def get_polygons(self, z=None, ignore_below=True):
         if z is None:
@@ -635,34 +615,6 @@ class ContourModel(BaseModel):
         else:
             return None
 
-    def get_offset_model_simple(self, offset, callback=None):
-        """ calculate a contour model that surrounds the current model with
-        a given offset.
-        This is mainly useful for engravings that should not proceed _on_ the
-        lines but besides these.
-        @value offset: shifting distance; positive values enlarge the model
-        @type offset: float
-        @value callback: function to call after finishing a single line.
-            It should return True if the user interrupted the operation.
-        @type callback: callable
-        @returns: the new shifted model
-        @rtype: pycam.Geometry.Model.Model
-        """
-        # use a cached offset model if it exists
-        if offset in self._cached_offset_models:
-            return self._cached_offset_models[offset]
-        result = ContourModel(plane=self._plane)
-        for group in self._line_groups:
-            new_groups = group.get_offset_polygons(offset)
-            if new_groups is not None:
-                for new_group in new_groups:
-                    result.append(new_group)
-            if callback and callback():
-                return None
-        # cache the result
-        self._cached_offset_models[offset] = result
-        return result
-
     def get_offset_model(self, offset, callback=None):
         result = ContourModel(plane=self._plane)
         for group in self.get_polygons():
@@ -672,66 +624,9 @@ class ContourModel(BaseModel):
                 return None
         return result
 
-    def get_copy(self):
-        result = ContourModel(plane=self._plane)
-        for group in self.get_polygons():
-            result.append(group)
-        return result
-
-    def check_for_collisions(self, callback=None, find_all_collisions=False):
-        """ check if lines in different line groups of this model collide
-
-        Returns a pycam.Geometry.Point.Point instance in case of an
-        intersection.
-        Returns None if the optional "callback" returns True (e.g. the user
-        interrupted the operation).
-        Otherwise it returns False if no intersections were found.
-        """
-        def check_bounds_of_groups(g1, g2):
-            if (g1.minx <= g2.minx <= g1.maxx) or (g1.minx <= g2.maxx <= g1.maxx) \
-                    or (g2.minx <= g1.minx <= g2.maxx) or (g2.minx <= g1.maxx <= g2.maxx):
-                # the x boundaries overlap
-                if (g1.miny <= g2.miny <= g1.maxy) or (g1.miny <= g2.maxy <= g1.maxy) \
-                        or (g2.miny <= g1.miny <= g2.maxy) or (g2.miny <= g1.maxy <= g2.maxy):
-                    # also the y boundaries overlap
-                    if (g1.minz <= g2.minz <= g1.maxz) or (g1.minz <= g2.maxz <= g1.maxz) \
-                            or (g2.minz <= g1.minz <= g2.maxz) or (g2.minz <= g1.maxz <= g2.maxz):
-                        # z overlaps as well
-                        return True
-            return False
-        # check each pair of line groups for intersections
-        intersections = []
-        for index1, group1 in enumerate(self._line_groups[:-1]):
-            for index2, group2 in enumerate(self._line_groups):
-                if index2 <= index1:
-                    # avoid double-checks
-                    continue
-                # check if both groups overlap - otherwise skip this pair
-                if check_bounds_of_groups(group1, group2):
-                    # check each pair of lines for intersections
-                    for line1 in group1.get_lines():
-                        for line2 in group2.get_lines():
-                            intersection, factor = line1.get_intersection(line2)
-                            if intersection:
-                                if find_all_collisions:
-                                    intersections.append((index1, index2))
-                                else:
-                                    # return just the place of intersection
-                                    return intersection
-            # update the progress visualization and quit if requested
-            if callback and callback():
-                if find_all_collisions:
-                    return intersections
-                else:
-                    return None
-        if find_all_collisions:
-            return intersections
-        else:
-            return False
-
     def extrude(self, stepping=None, func=None, callback=None):
         """ do a spherical extrusion of a 2D model.
-        This is mainly useful for extruding text in a visually pleasent way ...
+        This is mainly useful for extruding text in a visually pleasant way ...
         """
         outer_polygons = [(poly, []) for poly in self._line_groups if poly.is_outer()]
         for poly in self._line_groups:
@@ -764,8 +659,23 @@ class ContourModel(BaseModel):
                 result.append(new_polygon)
         return result or None
 
+    def to_x3d(self, color):
+        for polygon in self:
+            yield "<Shape>"
+            yield "<Appearance>"
+            yield ('<Material emissiveColor="{:f} {:f} {:f}" transparency="{:f}" />'
+                   .format(color["red"], color["green"], color["blue"], 1 - color["alpha"]))
+            yield "</Appearance>"
+            yield '<LineSet vertexCount="{:d}">'.format(len(polygon))
+            yield '<Coordinate point="'
+            for point in polygon:
+                yield "{:f} {:f} {:f}".format(*point)
+            yield '"/>'
+            yield "</LineSet>"
+            yield "</Shape>"
 
-class PolygonGroup(object):
+
+class PolygonGroup:
     """ A PolygonGroup consists of one outer and maybe multiple inner polygons.
     It is mainly used for 3D extrusion of polygons.
     """
@@ -974,7 +884,7 @@ class PolygonGroup(object):
         return self.z_level + func(line_distances[0])
 
 
-class TriangleOptimizer(object):
+class TriangleOptimizer:
 
     def __init__(self, callback=None):
         self.groups = {}
@@ -1033,7 +943,7 @@ class TriangleOptimizer(object):
 class Rectangle(IDGenerator, TransformableContainer):
 
     def __init__(self, p1, p2, p3, p4, normal=None):
-        super(Rectangle, self).__init__()
+        super().__init__()
         if normal:
             orders = ((p1, p2, p3, p4), (p1, p2, p4, p3), (p1, p3, p2, p4), (p1, p3, p4, p2),
                       (p1, p4, p2, p3), (p1, p4, p3, p2))
@@ -1066,7 +976,7 @@ class Rectangle(IDGenerator, TransformableContainer):
     def get_points(self):
         return (self.p1, self.p2, self.p3, self.p4)
 
-    def next(self):
+    def __next__(self):
         yield "p1"
         yield "p2"
         yield "p3"

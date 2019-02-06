@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -30,21 +29,16 @@ class PathPatternSpiral(pycam.Plugins.PluginBase):
     CATEGORIES = ["Process", "Path pattern"]
 
     def setup(self):
-        parameters = {"milling_style": pycam.Toolpath.MotionGrid.MILLING_STYLE_IGNORE,
+        parameters = {"milling_style": pycam.Toolpath.MotionGrid.MillingStyle.IGNORE,
                       "spiral_direction": None,
                       "rounded_corners": False}
-        self.core.get("register_parameter_set")("path_pattern", "spiral", "Spiral",
-                                                self.get_grid_generator, parameters=parameters,
-                                                weight=30)
-        return True
+        self.core.get("register_parameter_set")("path_pattern", "spiral", "Spiral", None,
+                                                parameters=parameters, weight=30)
+        return super().setup()
 
     def teardown(self):
         self.core.get("unregister_parameter_set")("path_pattern", "spiral")
-
-    def get_grid_generator(self, pattern):
-        kwargs = pattern["parameters"]
-        func = pycam.Toolpath.MotionGrid.get_spiral
-        return func, kwargs
+        super().teardown()
 
 
 class PathPatternGrid(pycam.Plugins.PluginBase):
@@ -54,17 +48,12 @@ class PathPatternGrid(pycam.Plugins.PluginBase):
     CATEGORIES = ["Process", "Path pattern"]
 
     def setup(self):
-        parameters = {"milling_style": pycam.Toolpath.MotionGrid.MILLING_STYLE_IGNORE,
-                      "grid_direction": pycam.Toolpath.MotionGrid.GRID_DIRECTION_X}
+        parameters = {"milling_style": pycam.Toolpath.MotionGrid.MillingStyle.IGNORE,
+                      "grid_direction": pycam.Toolpath.MotionGrid.GridDirection.X}
         self.core.get("register_parameter_set")("path_pattern", "grid", "Grid",
-                                                self.get_grid_generator, parameters=parameters,
-                                                weight=10)
-        return True
+                                                None, parameters=parameters, weight=10)
+        return super().setup()
 
     def teardown(self):
         self.core.get("unregister_parameter_set")("path_pattern", "grid")
-
-    def get_grid_generator(self, pattern):
-        kwargs = pattern["parameters"]
-        func = pycam.Toolpath.MotionGrid.get_fixed_grid
-        return func, kwargs
+        super().teardown()

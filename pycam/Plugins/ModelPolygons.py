@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -34,27 +33,29 @@ class ModelPolygons(pycam.Plugins.PluginBase):
             polygon_frame.unparent()
             self.core.register_ui("model_handling", "Polygons", polygon_frame, 0)
             self._gtk_handlers = (
-                (self.gui.get_object("ToggleModelDirectionButton"), "clicked",
-                 self._toggle_direction),
-                (self.gui.get_object("DirectionsGuessButton"), "clicked", self._revise_directions))
+                (self.gui.get_object("ToggleModelDirectionButton"),
+                 "clicked", self._adjust_polygons, "toggle_polygon_directions"),
+                (self.gui.get_object("DirectionsGuessButton"),
+                 "clicked", self._adjust_polygons, "revise_polygon_directions"))
             self._event_handlers = (
                 ("model-change-after", self._update_polygon_controls),
                 ("model-selection-changed", self._update_polygon_controls))
             self.register_gtk_handlers(self._gtk_handlers)
             self.register_event_handlers(self._event_handlers)
             self._update_polygon_controls()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
-            self.core.unregister_ui("model_handling", self.gui.get_object("ModelPolygonFrame"))
-            self.unregister_gtk_handlers(self._gtk_handlers)
             self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
+            self.core.unregister_ui("model_handling", self.gui.get_object("ModelPolygonFrame"))
+        super().teardown()
 
     def _get_polygon_models(self):
         models = []
         for model in self.core.get("models").get_selected():
-            if model and hasattr(model.model, "reverse_directions"):
+            if model and hasattr(model.get_model(), "reverse_directions"):
                 models.append(model)
         return models
 
@@ -66,30 +67,7 @@ class ModelPolygons(pycam.Plugins.PluginBase):
         else:
             frame.hide()
 
-    def _toggle_direction(self, widget=None):
+    def _adjust_polygons(self, widget=None, action=None):
         models = self._get_polygon_models()
-        if not models:
-            return
-        self.core.emit_event("model-change-before")
-        progress = self.core.get("progress")
-        progress.update(text="Reversing directions of contour model")
-        progress.set_multiple(len(models), "Model")
         for model in models:
-            model.model.reverse_directions(callback=progress.update)
-            progress.update_multiple()
-        progress.finish()
-        self.core.emit_event("model-change-after")
-
-    def _revise_directions(self, widget=None):
-        models = self._get_polygon_models()
-        if not models:
-            return
-        self.core.emit_event("model-change-before")
-        progress = self.core.get("progress")
-        progress.update(text="Analyzing directions of contour model")
-        progress.set_multiple(len(models), "Model")
-        for model in models:
-            model.model.revise_directions(callback=progress.update)
-            progress.update_multiple()
-        progress.finish()
-        self.core.emit_event("model-change-after")
+            model.extend_value("transformations", [{"action": action}])

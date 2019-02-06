@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -18,8 +17,9 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from pycam.Flow.history import merge_history_and_block_events
 import pycam.Plugins
-from pycam.Utils import get_non_conflicting_name
+import pycam.workspace.data_models
 
 
 class Processes(pycam.Plugins.ListPluginBase):
@@ -27,12 +27,11 @@ class Processes(pycam.Plugins.ListPluginBase):
     DEPENDS = ["ParameterGroupManager"]
     CATEGORIES = ["Process"]
     UI_FILE = "processes.ui"
+    COLLECTION_ITEM_TYPE = pycam.workspace.data_models.Process
 
     def setup(self):
         self.core.set("processes", self)
-        if self.gui:
-            import gtk
-            self._gtk = gtk
+        if self.gui and self._gtk:
             process_frame = self.gui.get_object("ProcessBox")
             process_frame.unparent()
             self._gtk_handlers = []
@@ -56,23 +55,23 @@ class Processes(pycam.Plugins.ListPluginBase):
                 # create a frame with an align and the item inside
                 if item.get_parent():
                     item.unparent()
-                frame_label = gtk.Label()
+                frame_label = self._gtk.Label()
                 frame_label.set_markup("<b>%s</b>" % name)
-                frame = gtk.Frame()
+                frame = self._gtk.Frame()
                 frame.set_label_widget(frame_label)
-                align = gtk.Alignment()
+                align = self._gtk.Alignment()
                 frame.add(align)
                 align.set_padding(0, 3, 12, 3)
                 align.add(item)
                 frame.show_all()
-                parameters_box.pack_start(frame, expand=False)
+                parameters_box.pack_start(frame, expand=False, fill=True, padding=0)
 
             self.core.register_ui_section("process_parameters", add_parameter_widget,
                                           clear_parameter_widgets)
             self.core.get("register_parameter_group")(
                 "process", changed_set_event="process-strategy-changed",
                 changed_set_list_event="process-strategy-list-changed",
-                get_current_set_func=self._get_strategy)
+                get_related_parameter_names=self._get_selected_strategy_parameter_names)
             self.parameter_widget = pycam.Gui.ControlsGTK.ParameterSection()
             self.core.register_ui_section("process_path_parameters",
                                           self.parameter_widget.add_widget,
@@ -82,62 +81,54 @@ class Processes(pycam.Plugins.ListPluginBase):
             self._gtk_handlers.append((self._modelview.get_selection(), "changed",
                                        "process-selection-changed"))
             self._gtk_handlers.append((self.gui.get_object("NameCell"), "edited",
-                                       self._edit_process_name))
+                                       self.edit_item_name))
             self._treemodel = self.gui.get_object("ProcessList")
             self._treemodel.clear()
             self._gtk_handlers.append((self.gui.get_object("StrategySelector"), "changed",
-                                       "process-strategy-changed"))
+                                       "process-control-changed"))
+            # define cell renderers
+            self.gui.get_object("NameColumn").set_cell_data_func(
+                self.gui.get_object("NameCell"), self.render_item_name)
+            self.gui.get_object("DescriptionColumn").set_cell_data_func(
+                self.gui.get_object("DescriptionCell"), self._render_process_description)
             self._event_handlers = (
-                ("process-strategy-list-changed", self._update_widgets),
-                ("process-list-changed", self._trigger_table_update),
-                ("process-selection-changed", self._process_switch),
-                ("process-changed", self._store_process_settings),
-                ("process-strategy-changed", self._store_process_settings))
+                ("process-strategy-list-changed", self._update_strategy_widgets),
+                ("process-selection-changed", self._update_process_widgets),
+                ("process-changed", self._update_process_widgets),
+                ("process-changed", self.force_gtk_modelview_refresh),
+                ("process-list-changed", self.force_gtk_modelview_refresh),
+                ("process-control-changed", self._transfer_controls_to_process))
             self.register_gtk_handlers(self._gtk_handlers)
             self.register_event_handlers(self._event_handlers)
+            self.select_strategy(None)
+            self._update_strategy_widgets()
+            self._update_process_widgets()
         self.register_state_item("processes", self)
         self.core.register_namespace("processes", pycam.Plugins.get_filter(self))
-        return True
+        return super().setup()
 
     def teardown(self):
-        self.clear_state_items()
-        self.core.unregister_namespace("processes")
-        if self.gui:
+        if self.gui and self._gtk:
+            self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self.core.unregister_ui("main", self.gui.get_object("ProcessBox"))
             self.core.unregister_ui_section("process_path_parameters")
             self.core.unregister_ui("process_parameters", self.parameter_widget.get_widget())
             self.core.unregister_ui_section("process_parameters")
-            self.unregister_gtk_handlers(self._gtk_handlers)
-            self.unregister_event_handlers(self._event_handlers)
+            self.core.get("unregister_parameter_group")("process")
+        self.clear_state_items()
+        self.core.unregister_namespace("processes")
         self.core.set("processes", None)
-        while len(self) > 0:
-            self.pop()
-        return True
+        self.clear()
+        super().teardown()
 
-    def _render_process_description(self, column, cell, model, m_iter):
+    def _render_process_description(self, column, cell, model, m_iter, data):
         # TODO: describe the strategy
         text = "TODO"
 #       process = self.get_by_path(model.get_path(m_iter))
         cell.set_property("text", text)
 
-    def _render_process_name(self, column, cell, model, m_iter):
-        process = self.get_by_path(model.get_path(m_iter))
-        cell.set_property("text", process["name"])
-
-    def _edit_process_name(self, cell, path, new_text):
-        process = self.get_by_path(path)
-        if process and (new_text != process["name"]) and new_text:
-            process["name"] = new_text
-            self.core.emit_event("process-list-changed")
-
-    def _trigger_table_update(self):
-        self.gui.get_object("NameColumn").set_cell_data_func(
-            self.gui.get_object("NameCell"), self._render_process_name)
-        self.gui.get_object("DescriptionColumn").set_cell_data_func(
-            self.gui.get_object("DescriptionCell"), self._render_process_description)
-
-    def _update_widgets(self):
-        selected = self._get_strategy()
+    def _update_strategy_widgets(self):
         model = self.gui.get_object("StrategyModel")
         model.clear()
         strategies = list(self.core.get("get_parameter_sets")("process").values())
@@ -147,12 +138,13 @@ class Processes(pycam.Plugins.ListPluginBase):
         # check if any on the processes became obsolete due to a missing plugin
         removal = []
         strat_names = [strat["name"] for strat in strategies]
-        for index, process in enumerate(self):
-            if not process["strategy"] in strat_names:
+        for index, process in enumerate(self.get_all()):
+            if not process.get_value("strategy").value in strat_names:
                 removal.append(index)
         removal.reverse()
+        collection = self.get_collection()
         for index in removal:
-            self.pop(index)
+            del collection[index]
         # show "new" only if a strategy is available
         self.gui.get_object("ProcessNew").set_sensitive(len(model) > 0)
         selector_box = self.gui.get_object("ProcessSelectorBox")
@@ -160,10 +152,14 @@ class Processes(pycam.Plugins.ListPluginBase):
             selector_box.hide()
         else:
             selector_box.show()
-        if selected:
-            self.select_strategy(selected["name"])
 
-    def _get_strategy(self, name=None):
+    def _get_selected_strategy_parameter_names(self):
+        strategy = self._get_selected_strategy()
+        return set() if strategy is None else set(strategy["parameters"].keys())
+
+    def _get_selected_strategy(self, name=None):
+        """ get a strategy object - either based on the given name or the currently selected one
+        """
         strategies = self.core.get("get_parameter_sets")("process")
         if name is None:
             # find the currently selected one
@@ -189,65 +185,41 @@ class Processes(pycam.Plugins.ListPluginBase):
         else:
             selector.set_active(-1)
 
-    def _store_process_settings(self):
+    def _transfer_controls_to_process(self):
         process = self.get_selected()
-        control_box = self.gui.get_object("ProcessSettingsControlsBox")
-        strategy = self._get_strategy()
-        if process is None or strategy is None:
-            control_box.hide()
-        else:
-            # Check if any of the relevant controls are still at their default
-            # values for this process type. These values are overridden by the
-            # default value of the new (changed) process type.
-            # E.g. this changes the "overlap" value from 10 to 60 when
-            # switching from slicing to surfacing.
-            if process["strategy"] \
-                    and process["strategy"] in self.core.get("get_parameter_sets")("process"):
-                old_strategy = self.core.get("get_parameter_sets")("process")[process["strategy"]]
-                if process["strategy"] != strategy["name"]:
-                    changes = {}
-                    common_keys = [key for key in old_strategy["parameters"]
-                                   if key in strategy["parameters"]]
-                    for key in common_keys:
-                        if process["parameters"][key] == old_strategy["parameters"][key]:
-                            changes[key] = strategy["parameters"][key]
-                        self.core.get("set_parameter_values")("process", changes)
-            process["strategy"] = strategy["name"]
-            parameters = process["parameters"]
-            parameters.update(self.core.get("get_parameter_values")("process"))
-            control_box.show()
-            self._trigger_table_update()
+        strategy = self._get_selected_strategy()
+        if process and strategy:
+            process.set_value("strategy", strategy["name"])
+            value_set = self.core.get("get_parameter_values")("process")
+            if "path_pattern" in value_set:
+                value_set.update(self.core.get("get_parameter_values")("path_pattern"))
+            for key, value in value_set.items():
+                process.set_value(key, value)
 
-    def _process_switch(self, widget=None, data=None):
+    def _update_process_widgets(self, widget=None, data=None):
         process = self.get_selected()
         control_box = self.gui.get_object("ProcessSettingsControlsBox")
-        if not process:
+        if process is None:
             control_box.hide()
         else:
-            self.core.block_event("process-changed")
-            self.core.block_event("process-strategy-changed")
-            strategy_name = process["strategy"]
-            self.select_strategy(strategy_name)
-            self.core.get("set_parameter_values")("process", process["parameters"])
-            control_box.show()
-            self.core.unblock_event("process-strategy-changed")
-            self.core.unblock_event("process-changed")
+            with self.core.blocked_events({"process-control-changed",
+                                           "process-strategy-changed",
+                                           "process-path-pattern-changed"}):
+                strategy_name = process.get_value("strategy").value
+                self.select_strategy(strategy_name)
+                data_dict = process.get_dict()
+                self.core.get("set_parameter_values")("process", data_dict)
+                if "path_pattern" in data_dict:
+                    self.core.get("set_parameter_values")("path_pattern", data_dict)
+                control_box.show()
             self.core.emit_event("process-strategy-changed")
             self.core.emit_event("process-changed")
 
-    def _process_new(self, *args):
-        strategies = self.core.get("get_parameter_sets")("process").values()
-        strategies.sort(key=lambda item: item["weight"])
-        strategy = strategies[0]
-        name = get_non_conflicting_name("Process #%d", [process["name"] for process in self])
-        new_process = ProcessEntity({"strategy": strategy["name"],
-                                     "parameters": strategy["parameters"].copy(),
-                                     "name": name})
-        self.append(new_process)
+    def _process_new(self, widget=None, strategy="slice"):
+        with merge_history_and_block_events(self.core):
+            params = {"strategy": strategy}
+            params.update(self.core.get("get_default_parameter_values")("process",
+                                                                        set_name=strategy))
+            new_process = pycam.workspace.data_models.Process(None, data=params)
+            new_process.set_application_value("name", self.get_non_conflicting_name("Process #%d"))
         self.select(new_process)
-
-
-class ProcessEntity(pycam.Plugins.ObjectWithAttributes):
-
-    def __init__(self, parameters):
-        super(ProcessEntity, self).__init__("process", parameters)

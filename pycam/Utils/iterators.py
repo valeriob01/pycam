@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008 Lode Leroy
 
@@ -19,12 +18,12 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 
-class Iterator(object):
+class Iterator:
     def __init__(self, seq, start=0):
         self.seq = seq
         self.ind = start
 
-    def next(self):
+    def __next__(self):
         if self.ind >= len(self.seq):
             return None
         else:
@@ -32,7 +31,7 @@ class Iterator(object):
             self.ind += 1
             return item
 
-    def insertBefore(self, item):
+    def insert_before(self, item):
         self.seq.insert(self.ind - 1, item)
         self.ind += 1
 
@@ -53,7 +52,7 @@ class Iterator(object):
                     self.ind -= 1
                 return
 
-    def takeNext(self):
+    def take_next(self):
         if self.ind >= len(self.seq):
             return None
         else:
@@ -72,13 +71,13 @@ class Iterator(object):
         return len(self.seq) - self.ind
 
 
-class CyclicIterator(object):
+class CyclicIterator:
     def __init__(self, seq, start=0):
         self.seq = seq
         self.ind = start
         self.count = len(seq)
 
-    def next(self):
+    def __next__(self):
         item = self.seq[self.ind]
         self.ind += 1
         if self.ind == len(self.seq):
@@ -96,20 +95,20 @@ class CyclicIterator(object):
 
 
 if __name__ == "__main__":
-    l = [1, 2, 4, 6]
-    print("l=", l)
-    i = Iterator(l)
+    values = [1, 2, 4, 6]
+    print("l=", values)
+    i = Iterator(values)
     print(i.peek())
     while True:
         val = next(i)
         if val is None:
             break
         if val == 4:
-            i.insertBefore(3)
+            i.insert_before(3)
             i.insert(5)
 
-    print("l=", l)
-    i = Iterator(l)
+    print("l=", values)
+    i = Iterator(values)
     print("peek(0)=", i.peek(0))
     print("peek(1)=", i.peek(1))
     print("i.next()=", next(i))
@@ -118,9 +117,9 @@ if __name__ == "__main__":
 
     print("remains=", i.remains())
 
-    print("l=", l)
+    print("l=", values)
     sum_value = 0
-    i = CyclicIterator(l)
+    i = CyclicIterator(values)
     print("cycle :"),
     while sum_value < 30:
         val = next(i)
@@ -128,8 +127,8 @@ if __name__ == "__main__":
         sum_value += val
     print("=", sum_value)
 
-    i = Iterator(l)
-    print("l=", l)
+    i = Iterator(values)
+    print("l=", values)
     next(i)
     next(i)
     print("next,next : ", i.peek())
@@ -137,4 +136,4 @@ if __name__ == "__main__":
     print("remove(2) : ", i.peek())
     i.remove(4)
     print("remove(4) : ", i.peek())
-    print("l=", l)
+    print("l=", values)

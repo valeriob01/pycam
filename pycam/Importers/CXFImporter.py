@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -18,6 +17,7 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from pycam.errors import LoadFileError
 from pycam.Geometry.Letters import Charset
 from pycam.Geometry.Line import Line
 from pycam.Geometry.utils import get_points_of_arc
@@ -27,11 +27,12 @@ import pycam.Utils
 log = pycam.Utils.log.get_logger()
 
 
-class _CXFParseError(BaseException):
+class _CXFParseError(LoadFileError):
     pass
 
 
-class _LineFeeder(object):
+class _LineFeeder:
+    """ Simplify line-based retrieval of content (including lookahead) """
 
     def __init__(self, items):
         self.items = items
@@ -39,27 +40,31 @@ class _LineFeeder(object):
         self.index = 0
 
     def consume(self):
-        if not self.is_empty():
-            result = self.get()
+        """ retrieve and consume the next line """
+        if not self.is_exhausted():
+            result = self.get_next_line()
             self.index += 1
         else:
             result = None
         return result
 
-    def get(self):
-        if not self.is_empty():
+    def get_next_line(self):
+        """ retrieve the next line (without consuming it) """
+        if not self.is_exhausted():
             return self.items[self.index].strip()
         else:
             return None
 
-    def is_empty(self):
+    def is_exhausted(self):
+        """ did we already consume all lines? """
         return self.index >= self._len
 
-    def get_index(self):
-        return self.index + 1
+    def get_recent_line_number(self):
+        """ return the line number for the most recently consumed line """
+        return self.index
 
 
-class CXFParser(object):
+class CXFParser:
 
     META_KEYWORDS = ("letterspacing", "wordspacing", "linespacingfactor", "encoding")
     META_KEYWORDS_MULTI = ("author", "name")
@@ -69,12 +74,17 @@ class CXFParser(object):
         self.meta = {}
         self.callback = callback
         feeder = _LineFeeder(stream.readlines())
-        while not feeder.is_empty():
-            line = feeder.consume()
-            if not line:
+        while not feeder.is_exhausted():
+            line_data = feeder.consume()
+            if not line_data:
                 # ignore
                 pass
-            elif line.startswith("#"):
+            elif line_data.startswith(b"#"):
+                try:
+                    line = line_data.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise _CXFParseError("Failed to decode line {:d}"
+                                         .format(feeder.get_recent_line_number())) from exc
                 # comment or meta data
                 content = line[1:].split(":", 1)
                 if len(content) == 2:
@@ -86,9 +96,9 @@ class CXFParser(object):
                                 self.meta[key] = float(value)
                             else:
                                 self.meta[key] = value
-                        except ValueError:
-                            raise _CXFParseError("Invalid meta information in line %d"
-                                                 % feeder.get_index())
+                        except ValueError as exc:
+                            raise _CXFParseError("Invalid meta information in line {:d}"
+                                                 .format(feeder.get_recent_line_number())) from exc
                     elif key in self.META_KEYWORDS_MULTI:
                         if key in self.meta:
                             self.meta[key].append(value)
@@ -97,47 +107,47 @@ class CXFParser(object):
                     else:
                         # unknown -> ignore
                         pass
-            elif line.startswith("["):
+            elif line_data.startswith(b"["):
                 # Update the GUI from time to time.
                 # This is useful for the big unicode font.
                 if self.callback and (len(self.letters) % 50 == 0):
                     self.callback()
-                if (len(line) >= 3) and (line[2] == "]"):
+                if (len(line_data) >= 3) and (line_data[2:3] == b"]"):
                     # single character
                     for encoding in ("utf-8", "iso8859-1", "iso8859-15"):
                         try:
-                            character = line[1].decode(encoding)
+                            character = line_data[1:2].decode(encoding)
                             break
                         except UnicodeDecodeError:
                             pass
                     else:
-                        raise _CXFParseError("Failed to decode character at line %d"
-                                             % feeder.get_index())
-                elif (len(line) >= 6) and (line[5] == "]"):
-                    # python2/3 compatibility
-                    try:
-                        unichr
-                    except NameError:
-                        unichr = chr
+                        raise _CXFParseError("Failed to decode character at line {:d}"
+                                             .format(feeder.get_recent_line_number()))
+                elif (len(line_data) >= 6) and (line_data[5:6] == b"]"):
                     # unicode character (e.g. "[1ae4]")
                     try:
-                        character = unichr(int(line[1:5], 16))
-                    except ValueError:
-                        raise _CXFParseError("Failed to parse unicode character at line %d"
-                                             % feeder.get_index())
-                elif (len(line) > 3) and (line.find("]") > 2):
+                        character = chr(int(line_data[1:5], 16))
+                    except ValueError as exc:
+                        raise _CXFParseError("Failed to parse unicode character at line {:d}"
+                                             .format(feeder.get_recent_line_number())) from exc
+                elif (len(line_data) > 3) and (line_data.find(b"]") > 2):
                     # read UTF8 (qcad 1 compatibility)
-                    end_bracket = line.find("] ")
-                    text = line[1:end_bracket]
+                    end_bracket = line_data.find(b"] ")
+                    text = line_data[1:end_bracket]
                     character = text.decode("utf-8", errors="ignore")[0]
                 else:
                     # unknown format
-                    raise _CXFParseError("Failed to parse character at line %d"
-                                         % feeder.get_index())
+                    raise _CXFParseError("Failed to parse character at line {:d}"
+                                         .format(feeder.get_recent_line_number()))
                 # parse the following lines up to the next empty line
                 char_definition = []
-                while not feeder.is_empty() and (len(feeder.get()) > 0):
-                    line = feeder.consume()
+                while not feeder.is_exhausted() and feeder.get_next_line():
+                    line_data = feeder.consume()
+                    try:
+                        line = line_data.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise _CXFParseError("Failed to decode line {:d}"
+                                             .format(feeder.get_recent_line_number())) from exc
                     # split the line after the first whitespace
                     type_def, coord_string = line.split(None, 1)
                     coords = [float(value) for value in coord_string.split(",")]
@@ -161,28 +171,28 @@ class CXFParser(object):
                                 char_definition.append(Line(previous, current))
                             previous = current
                     else:
-                        raise _CXFParseError("Failed to read item coordinates in line %d"
-                                             % feeder.get_index())
+                        raise _CXFParseError("Failed to read item coordinates in line {:d}"
+                                             .format(feeder.get_recent_line_number()))
                 self.letters[character] = char_definition
             else:
                 # unknown line format
-                raise _CXFParseError("Failed to parse unknown content in line %d"
-                                     % feeder.get_index())
+                raise _CXFParseError("Failed to parse unknown content in line {:d}"
+                                     .format(feeder.get_recent_line_number()))
 
 
 def import_font(filename, callback=None):
     try:
         infile = pycam.Utils.URIHandler(filename).open()
-    except IOError as err_msg:
-        log.error("CXFImporter: Failed to read file (%s): %s", filename, err_msg)
-        return None
+    except IOError as exc:
+        raise LoadFileError("CXFImporter: Failed to read file ({}): {}"
+                            .format(filename, exc)) from exc
     try:
         parsed_font = CXFParser(infile, callback=callback)
-    except _CXFParseError as err_msg:
-        log.warn("CFXImporter: Skipped font defintion file '%s'. Reason: %s.", filename, err_msg)
-        return None
+    except _CXFParseError as exc:
+        raise LoadFileError("CFXImporter: Skipped font definition file '{}'. Reason: {}."
+                            .format(filename, exc)) from exc
     charset = Charset(**parsed_font.meta)
-    for key, value in parsed_font.letters.iteritems():
+    for key, value in parsed_font.letters.items():
         charset.add_character(key, value)
     log.info("CXFImporter: Imported CXF font from '%s': %d letters",
              filename, len(parsed_font.letters))

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2012 Lars Kruse <devel@sumpfralle.de>
 
@@ -20,9 +19,7 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import csv
-import StringIO
-
-import gobject
+from io import StringIO
 
 import pycam.Plugins
 import pycam.Utils.log
@@ -37,9 +34,9 @@ class MemoryAnalyzer(pycam.Plugins.PluginBase):
     CATEGORIES = ["System"]
 
     def setup(self):
+        if not self._gtk:
+            return False
         if self.gui:
-            import gtk
-            self._gtk = gtk
             # menu item and shortcut
             self.toggle_action = self.gui.get_object("ToggleMemoryAnalyzerAction")
             self._gtk_handlers = []
@@ -73,15 +70,15 @@ class MemoryAnalyzer(pycam.Plugins.PluginBase):
                 self._guppy = guppy
                 self.gui.get_object("MemoryAnalyzerBrokenLabel").hide()
             self.register_gtk_handlers(self._gtk_handlers)
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self.window.hide()
             self.core.unregister_ui("view_menu", self.toggle_action)
             self.unregister_gtk_accelerator("memory_analyzer", self.toggle_action)
-            self.core.unregister_ui("view_menu", self.toggle_action)
-            self.unregister_gtk_handlers(self._gtk_handlers)
+        super().teardown()
 
     def toggle_window(self, widget=None, value=None, action=None):
         checkbox_state = self.toggle_action.get_active()
@@ -108,7 +105,7 @@ class MemoryAnalyzer(pycam.Plugins.PluginBase):
         self.gui.get_object("MemoryAnalyzerLoadingLabel").show()
         for objname in ("MemoryAnalyzerRefreshButton", "MemoryAnalyzerCopyButton"):
             self.gui.get_object(objname).set_sensitive(False)
-        gobject.idle_add(self._refresh_data_in_background)
+        self._gobject.idle_add(self._refresh_data_in_background)
 
     def _refresh_data_in_background(self):
         if not self._guppy:
@@ -123,7 +120,7 @@ class MemoryAnalyzer(pycam.Plugins.PluginBase):
         self.gui.get_object("MemoryAnalyzerLoadingLabel").hide()
 
     def copy_to_clipboard(self, widget=None):
-        text_buffer = StringIO.StringIO()
+        text_buffer = StringIO()
         writer = csv.writer(text_buffer)
         writer.writerow(("Type", "Count", "Size (all) [kB]", "Average size [B]"))
         for row in self.model:

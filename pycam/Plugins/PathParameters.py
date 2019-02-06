@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -33,18 +32,20 @@ class PathParamOverlap(pycam.Plugins.PluginBase):
         # configure the input/output converter
         self.control = pycam.Gui.ControlsGTK.InputNumber(
             lower=0, upper=99, digits=0, increment=10,
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.control.set_conversion(
             set_conv=lambda float_value: int(float_value * 100.0),
             get_conv=lambda percent: percent / 100.0)
         self.core.get("register_parameter")("process", "overlap", self.control)
         self.core.register_ui("process_path_parameters", "Overlap [%]", self.control.get_widget(),
                               weight=10)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("process", "overlap")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamStepDown(pycam.Plugins.PluginBase):
@@ -55,15 +56,17 @@ class PathParamStepDown(pycam.Plugins.PluginBase):
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputNumber(
             lower=0.01, digits=2, start=1,
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("process", "step_down", self.control)
         self.core.register_ui("process_path_parameters", "Step down", self.control.get_widget(),
                               weight=20)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("process", "step_down")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamMaterialAllowance(pycam.Plugins.PluginBase):
@@ -74,15 +77,17 @@ class PathParamMaterialAllowance(pycam.Plugins.PluginBase):
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputNumber(
             start=0, lower=0, digits=2,
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("process", "material_allowance", self.control)
         self.core.register_ui("process_path_parameters", "Material allowance",
                               self.control.get_widget(), weight=30)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("process", "material_allowance")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamMillingStyle(pycam.Plugins.PluginBase):
@@ -92,20 +97,22 @@ class PathParamMillingStyle(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputChoice(
-            (("ignore", pycam.Toolpath.MotionGrid.MILLING_STYLE_IGNORE),
-             ("climb / down", pycam.Toolpath.MotionGrid.MILLING_STYLE_CLIMB),
-             ("conventional / up", pycam.Toolpath.MotionGrid.MILLING_STYLE_CONVENTIONAL)),
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            (("ignore", pycam.Toolpath.MotionGrid.MillingStyle.IGNORE.value),
+             ("climb / down", pycam.Toolpath.MotionGrid.MillingStyle.CLIMB.value),
+             ("conventional / up", pycam.Toolpath.MotionGrid.MillingStyle.CONVENTIONAL.value)),
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("path_pattern", "milling_style", self.control)
         self.core.get("register_parameter")("process", "milling_style", self.control)
         self.core.register_ui("process_path_parameters", "Milling style",
                               self.control.get_widget(), weight=50)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("path_pattern", "milling_style")
         self.core.get("unregister_parameter")("process", "milling_style")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamGridDirection(pycam.Plugins.PluginBase):
@@ -115,20 +122,22 @@ class PathParamGridDirection(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputChoice(
-            (("x", pycam.Toolpath.MotionGrid.GRID_DIRECTION_X),
-             ("y", pycam.Toolpath.MotionGrid.GRID_DIRECTION_Y),
-             ("xy", pycam.Toolpath.MotionGrid.GRID_DIRECTION_XY)),
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            (("x", pycam.Toolpath.MotionGrid.GridDirection.X.value),
+             ("y", pycam.Toolpath.MotionGrid.GridDirection.Y.value),
+             ("xy", pycam.Toolpath.MotionGrid.GridDirection.XY.value)),
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("path_pattern", "grid_direction", self.control)
         self.core.get("register_parameter")("process", "grid_direction", self.control)
         self.core.register_ui("process_path_parameters", "Direction", self.control.get_widget(),
                               weight=40)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("path_pattern", "grid_direction")
         self.core.get("unregister_parameter")("process", "grid_direction")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamSpiralDirection(pycam.Plugins.PluginBase):
@@ -138,17 +147,19 @@ class PathParamSpiralDirection(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputChoice(
-            (("outside -> center", pycam.Toolpath.MotionGrid.SPIRAL_DIRECTION_IN),
-             ("center -> outside", pycam.Toolpath.MotionGrid.SPIRAL_DIRECTION_OUT)),
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            (("outside -> center", pycam.Toolpath.MotionGrid.SpiralDirection.IN.value),
+             ("center -> outside", pycam.Toolpath.MotionGrid.SpiralDirection.OUT.value)),
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("path_pattern", "spiral_direction", self.control)
         self.core.register_ui("process_path_parameters", "Direction", self.control.get_widget(),
                               weight=40)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("path_pattern", "spiral_direction")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamPattern(pycam.Plugins.PluginBase):
@@ -159,57 +170,29 @@ class PathParamPattern(pycam.Plugins.PluginBase):
     def setup(self):
         self.choices = []
         self.control = pycam.Gui.ControlsGTK.InputChoice(
-            [], change_handler=lambda widget=None: self.core.emit_event("process-changed"))
-        self.control.set_conversion(set_conv=self._set_value_converter,
-                                    get_conv=self._get_value_converter)
+            [], change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("process", "path_pattern", self.control)
         self.core.get("register_parameter_group")(
             "path_pattern", changed_set_event="process-path-pattern-changed",
             changed_set_list_event="process-path-pattern-list-changed",
-            get_current_set_func=self._get_pattern)
+            get_related_parameter_names=self._get_pattern_parameter_names)
         self.core.register_ui("process_path_parameters", "Pattern", self.control.get_widget(),
                               weight=5)
-        self.control.get_widget().connect(
-            "changed", lambda widget: self.core.emit_event("process-path-pattern-changed"))
         self._event_handlers = (
-            ("process-path-pattern-list-changed", self._update_selector),
+            ("process-path-pattern-list-changed", self._update_pattern_list_widget),
             ("process-changed", "process-path-pattern-changed"))
         self.register_event_handlers(self._event_handlers)
-        return True
-
-    def _get_value_converter(self, value):
-        if value:
-            pattern_sets = self.core.get("get_parameter_sets")("path_pattern")
-            try:
-                current_pattern_set = pattern_sets[value]
-            except KeyError:
-                return None
-            parameter_keys = current_pattern_set["parameters"].keys()
-            all_parameters = self.core.get("get_parameter_values")("path_pattern")
-            result = {"name": value, "parameters": {}}
-            for parameter_key in parameter_keys:
-                result["parameters"][parameter_key] = all_parameters[parameter_key]
-            return result
-        else:
-            return None
-
-    def _set_value_converter(self, value):
-        if value:
-            self.core.get("set_parameter_values")("path_pattern", value["parameters"])
-            return value["name"]
-        elif self.choices:
-            # use the first entry as the default value
-            return self.choices[0][1]
-        else:
-            return None
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.unregister_event_handlers(self._event_handlers)
         self.core.get("unregister_parameter")("process", "path_pattern")
         self.core.get("unregister_parameter_group")("path_pattern")
+        self.control.destroy()
+        super().teardown()
 
-    def _update_selector(self):
+    def _update_pattern_list_widget(self):
         patterns = list(self.core.get("get_parameter_sets")("path_pattern").values())
         patterns.sort(key=lambda item: item["weight"])
         self.choices = []
@@ -219,30 +202,36 @@ class PathParamPattern(pycam.Plugins.PluginBase):
         if not self.control.get_value() and self.choices:
             self.control.set_value({"name": self.choices[0][1], "parameters": {}})
 
-    def _get_pattern(self):
-        pattern_set = self.control.get_value()
-        if pattern_set:
-            return self.core.get("get_parameter_sets")("path_pattern")[pattern_set["name"]]
+    def _get_pattern_parameter_names(self):
+        pattern_name = self.control.get_value()
+        # The path pattern is not used for all process strategies. Thus we need to check, whether
+        # we are currently in use (i.e. visible).
+        is_visible = self.control.is_visible()
+        if pattern_name and is_visible:
+            pattern = self.core.get("get_parameter_sets")("path_pattern")[pattern_name]
+            return set(pattern["parameters"].keys())
         else:
-            return None
+            return set()
 
 
 class PathParamRoundedSpiralCorners(pycam.Plugins.PluginBase):
 
-    DEPENDS = ["Processes"]
+    DEPENDS = {"Processes", "PathParamPattern"}
     CATEGORIES = ["Process", "Parameter"]
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputCheckBox(
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("path_pattern", "rounded_corners", self.control)
         self.core.register_ui("process_path_parameters", "Rounded corners",
                               self.control.get_widget(), weight=80)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("path_pattern", "rounded_corners")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamRadiusCompensation(pycam.Plugins.PluginBase):
@@ -252,15 +241,17 @@ class PathParamRadiusCompensation(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputCheckBox(
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("process", "radius_compensation", self.control)
         self.core.register_ui("process_path_parameters", "Radius compensation",
                               self.control.get_widget(), weight=80)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
         self.core.get("unregister_parameter")("process", "radius_compensation")
+        self.control.destroy()
+        super().teardown()
 
 
 class PathParamTraceModel(pycam.Plugins.PluginBase):
@@ -270,39 +261,28 @@ class PathParamTraceModel(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputTable(
-            [], change_handler=lambda widget=None: self.core.emit_event("process-changed"))
-
-        def get_converter(model_refs):
-            models_dict = {}
-            for model in self.core.get("models"):
-                models_dict[id(model)] = model
-            models = []
-            for model_ref in model_refs:
-                if model_ref in models_dict:
-                    models.append(models_dict[model_ref])
-            return models
-
-        def set_converter(models):
-            return [id(model) for model in models]
-
-        self.control.set_conversion(set_conv=set_converter, get_conv=get_converter)
+            [], change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("process", "trace_models", self.control)
         self.core.register_ui("process_path_parameters", "Trace models (2D)",
                               self.control.get_widget(), weight=5)
         self.core.register_event("model-list-changed", self._update_models)
-        return True
+        self.core.register_event("model-changed", self._update_models)
+        return super().setup()
 
     def teardown(self):
+        self.core.unregister_event("model-changed", self._update_models)
+        self.core.unregister_event("model-list-changed", self._update_models)
         self.core.get("unregister_parameter")("process", "trace_models")
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
-        self.core.unregister_event("model-list-changed", self._update_models)
+        self.control.destroy()
+        super().teardown()
 
     def _update_models(self):
         choices = []
-        models = self.core.get("models")
-        for model in models:
-            if hasattr(model.model, "get_polygons"):
-                choices.append((model["name"], model))
+        for model in self.core.get("models").get_all():
+            if hasattr(model.get_model(), "get_polygons"):
+                choices.append((model.get_application_value("name", model.get_id()),
+                                model.get_id()))
         self.control.update_choices(choices)
 
 
@@ -313,15 +293,17 @@ class PathParamPocketingType(pycam.Plugins.PluginBase):
 
     def setup(self):
         self.control = pycam.Gui.ControlsGTK.InputChoice(
-            (("none", pycam.Toolpath.MotionGrid.POCKETING_TYPE_NONE),
-             ("holes", pycam.Toolpath.MotionGrid.POCKETING_TYPE_HOLES),
-             ("material", pycam.Toolpath.MotionGrid.POCKETING_TYPE_MATERIAL)),
-            change_handler=lambda widget=None: self.core.emit_event("process-changed"))
+            (("none", pycam.Toolpath.MotionGrid.PocketingType.NONE.value),
+             ("holes", pycam.Toolpath.MotionGrid.PocketingType.HOLES.value),
+             ("material", pycam.Toolpath.MotionGrid.PocketingType.MATERIAL.value)),
+            change_handler=lambda widget=None: self.core.emit_event("process-control-changed"))
         self.core.get("register_parameter")("process", "pocketing_type", self.control)
         self.core.register_ui("process_path_parameters", "Pocketing", self.control.get_widget(),
                               weight=60)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.unregister_ui("process_path_parameters", self.control.get_widget())
-        self.core.get("unregister_parameter")("path_pattern", "pocketing_type")
+        self.core.get("unregister_parameter")("process", "pocketing_type")
+        self.control.destroy()
+        super().teardown()

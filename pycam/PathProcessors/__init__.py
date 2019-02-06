@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008 Lode Leroy
 
@@ -19,7 +18,7 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 
-class BasePathProcessor(object):
+class BasePathProcessor:
 
     def __init__(self):
         self.paths = []

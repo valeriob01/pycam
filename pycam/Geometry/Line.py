@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008-2009 Lode Leroy
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
@@ -19,18 +18,10 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-try:
-    import OpenGL.GL as GL
-    GL_enabled = True
-except ImportError:
-    GL_enabled = False
-
 from pycam.Geometry import epsilon, TransformableContainer, IDGenerator
 from pycam.Geometry.Plane import Plane
-from pycam.Geometry.PointUtils import (padd, pcross, pdist, pdist_sq, pdot, pmul, pnorm, pnormsq,
+from pycam.Geometry.PointUtils import (padd, pcross, pdist, pdot, pmul, pnorm, pnormsq,
                                        pnormalized, psub)
-# OpenGLTools will be imported later, if necessary
-# import pycam.Gui.OpenGLTools
 
 
 class Line(IDGenerator, TransformableContainer):
@@ -38,7 +29,7 @@ class Line(IDGenerator, TransformableContainer):
     __slots__ = ["id", "p1", "p2", "_vector", "_minx", "_maxx", "_miny", "_maxy", "_minz", "_maxz"]
 
     def __init__(self, p1, p2):
-        super(Line, self).__init__()
+        super().__init__()
         self.p1 = p1
         self.p2 = p2
         self.reset_cache()
@@ -108,7 +99,7 @@ class Line(IDGenerator, TransformableContainer):
         """
         return (self.p1, self.p2) < (other.p1, other.p2)
 
-    def next(self):
+    def __next__(self):
         yield "p1"
         yield "p2"
 
@@ -131,21 +122,13 @@ class Line(IDGenerator, TransformableContainer):
     def point_with_length_multiply(self, l):
         return padd(self.p1, pmul(self.dir, l*self.len))
 
-    def get_length_line(self, length):
-        """ return a line with the same direction and the specified length
-        """
-        return Line(self.p1, padd(self.p1, pmul(self.dir, length)))
-
     def closest_point(self, p):
         v = self.dir
         if v is None:
             # for zero-length lines
             return self.p1
-        l = pdot(self.p1, v) - pdot(p, v)
-        return psub(self.p1, pmul(v, l))
-
-    def dist_to_point_sq(self, p):
-        return pdist_sq(p, self.closest_point(p))
+        dist = pdot(self.p1, v) - pdot(p, v)
+        return psub(self.p1, pmul(v, dist))
 
     def dist_to_point(self, p):
         return pdist(p, self.closest_point(p))
@@ -159,22 +142,6 @@ class Line(IDGenerator, TransformableContainer):
         # True if the two parts of the line have the same direction or if the
         # point is self.p1 or self.p2.
         return (dir1 == dir2 == self.dir) or (dir1 is None) or (dir2 is None)
-
-    def to_OpenGL(self, color=None, show_directions=False):
-        if not GL_enabled:
-            return
-        if color is not None:
-            GL.glColor4f(*color)
-        GL.glBegin(GL.GL_LINES)
-        GL.glVertex3f(self.p1[0], self.p1[1], self.p1[2])
-        GL.glVertex3f(self.p2[0], self.p2[1], self.p2[2])
-        GL.glEnd()
-        # (optional) draw a cone for visualizing the direction of each line
-        if show_directions and (self.len > 0):
-            # We can't import OpenGLTools in the header - otherwise server
-            # mode without GTK will break.
-            import pycam.Gui.OpenGLTools
-            pycam.Gui.OpenGLTools.draw_direction_cone(self.p1, self.p2)
 
     def get_intersection(self, line, infinite_lines=False):
         """ Get the point of intersection between two lines. Intersections
@@ -209,7 +176,7 @@ class Line(IDGenerator, TransformableContainer):
             else:
                 return None, None
             # return the collision candidate with the lowest distance
-            candidates.sort(key=lambda cp, dist: dist)
+            candidates.sort(key=lambda collision: collision[1])
             return candidates[0]
         if infinite_lines or (-epsilon <= factor <= 1 + epsilon):
             intersec = padd(x1, pmul(a, factor))
@@ -250,7 +217,7 @@ class Line(IDGenerator, TransformableContainer):
                                    if cp and (-epsilon <= dist <= self.len + epsilon)
                                    and cp.is_inside(minx, maxx, miny, maxy, minz, maxz)]
             # sort the intersections according to their distance to self.p1
-            valid_intersections.sort(key=lambda cp, dist: dist)
+            valid_intersections.sort(key=lambda collision: collision[1])
             # Check if p1 is within the box - otherwise use the closest
             # intersection. The check for "valid_intersections" is necessary
             # to prevent an IndexError due to floating point inaccuracies.

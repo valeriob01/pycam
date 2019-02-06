@@ -51,7 +51,7 @@ Outlines and holes
 
 ![Combining polygons with proper directions](img/2d-modeling-polygon_directions.png)
 
-The following hints are only necesary, if you need an SVG with
+The following hints are only necessary, if you need an SVG with
 consistent winding states. Alternatively you can repair inconsistent
 winding states with the *Revise directions* button in the *Model* tab of
 PyCAM. This button is only visible if you are currently working with a
@@ -91,6 +91,23 @@ supplied with PyCAM.
 
 Pseudo 3D support
 -----------------
+
+### Height by layer (since v0.7)
+
+You can create 2D shapes at different heights (z-levels) by using
+multiple layers in your SVG document (e.g. via inkscape).
+
+When loading an SVG file with multiple layers, the height gap between
+each two layers is one unit (e.g. mm). This distance can be easily
+scaled within PyCAM to an arbitrary height. This allows a precise
+height adjustment as long as only two layers are involved.
+
+If more than two layers with specific height requirements
+are required, then you need to add empty layers between these in
+order to achieve the wanted height gap between the objects.
+
+
+### Height derived from color (up to v0.6.x)
 
 ![A multi-colored SVG graphic.](img/2d-multilayer-engrave.png)
 
@@ -161,7 +178,7 @@ following procedure with care and check the result carefully.
     different colors picked from the current palette (don't create
     custom colors!).
 5.  The order of the colors taken from the color palette determines the
-    relative height of each object. You need to avoid colors that occour
+    relative height of each object. You need to avoid colors that occur
     multiple times in the palette (e.g. green).
 6.  Open the SVG file in PyCAM and scale the z axis of the model.
     Hopefully the relative vertical distances of your 2D shapes suit

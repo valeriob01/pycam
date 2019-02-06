@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008-2010 Lode Leroy
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
@@ -19,10 +18,11 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from io import BufferedReader, BytesIO, TextIOWrapper
 import re
-import StringIO
 from struct import unpack
 
+from pycam.errors import AbortOperationException, LoadFileError
 from pycam.Geometry import epsilon
 from pycam.Geometry.Model import Model
 from pycam.Geometry.PointKdtree import PointKdtree
@@ -32,18 +32,22 @@ import pycam.Utils.log
 import pycam.Utils
 log = pycam.Utils.log.get_logger()
 
+# The amount of bytes in the header field
+HEADER_SIZE = 80
+# The amount of bytes in the count field
+COUNT_SIZE = 4
 
 vertices = 0
 edges = 0
 kdtree = None
-lastUniqueVertex = (None, None, None)
+last_unique_vertex = (None, None, None)
 
 
-def UniqueVertex(x, y, z):
-    global vertices, lastUniqueVertex
+def get_unique_vertex(x, y, z):
+    global vertices, last_unique_vertex
     if kdtree:
-        p = kdtree.Point(x, y, z)
-        if p == lastUniqueVertex:
+        p = kdtree.point(x, y, z)
+        if p == last_unique_vertex:
             vertices += 1
         return p
     else:
@@ -51,7 +55,39 @@ def UniqueVertex(x, y, z):
         return (x, y, z)
 
 
-def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
+def get_facet_count_if_binary_format(source):
+    """ Read the first two lines of (potentially non-binary) input - they should contain "solid"
+    and "facet". The return value is a number representing the number of facets (binary format) or
+    None (text format).
+
+    The below detection is quite simple: it looks for the strings "facet" and "solid" in the first
+    400 bytes.
+    An even better detection would check, if the following conditition is true:
+        numfacets = unpack("<I", raw_header_data[80:84])[0]
+        return source.len == (84 + 50 * numfacets)
+    But this check requires access to the length attribute of the input data. This is not easily
+    available for remote sources (e.g. via http). Thus we stick to the simple check.
+    """
+    # read data (without consuming it)
+    raw_header_data = source.peek(400)
+
+    facet_count = unpack(
+        "<I", raw_header_data[HEADER_SIZE:HEADER_SIZE + COUNT_SIZE]
+    )[0]
+
+    try:
+        header_data = raw_header_data.decode("utf-8")
+    except UnicodeDecodeError:
+        # it does not look like text
+        return facet_count
+    if ("solid" in header_data) and ("facet" in header_data):
+        # this looks like a text format
+        return None
+    else:
+        return facet_count
+
+
+def import_model(filename, use_kdtree=True, callback=None, **kwargs):
     global vertices, edges, kdtree
     vertices = 0
     edges = 0
@@ -61,51 +97,22 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
 
     if hasattr(filename, "read"):
         # make sure that the input stream can seek and has ".len"
-        f = StringIO.StringIO(filename.read())
+        f = BufferedReader(filename)
         # useful for later error messages
         filename = "input stream"
     else:
         try:
             url_file = pycam.Utils.URIHandler(filename).open()
-            # urllib.urlopen objects do not support "seek" - so we need to read
-            # the whole file at once. This is ugly - anyone with a better idea?
-            f = StringIO.StringIO(url_file.read())
-            # TODO: the above ".read" may be incomplete - this is ugly
-            # see http://patrakov.blogspot.com/2011/03/case-of-non-raised-exception.html
-            # and http://stackoverflow.com/questions/1824069/
+            # urllib.urlopen objects do not support "seek" - so we need a buffered reader
+            # Is there a better approach than consuming the whole file at once?
+            f = BufferedReader(BytesIO(url_file.read()))
             url_file.close()
-        except IOError as err_msg:
-            log.error("STLImporter: Failed to read file (%s): %s", filename, err_msg)
-            return None
-    # Read the first two lines of (potentially non-binary) input - they should
-    # contain "solid" and "facet".
-    header_lines = []
-    while len(header_lines) < 2:
-        line = f.readline(200)
-        if len(line) == 0:
-            # empty line (not even a line-feed) -> EOF
-            log.error("STLImporter: No valid lines found in '%s'", filename)
-            return None
-        # ignore comment lines
-        # note: partial comments (starting within a line) are not handled
-        if not line.startswith(";"):
-            header_lines.append(line)
-    header = "".join(header_lines)
-    # read byte 80 to 83 - they contain the "numfacets" value in binary format
-    f.seek(80)
-    numfacets = unpack("<I", f.read(4))[0]
-    binary = False
-    log.debug("STL import info: %s / %s / %s / %s",
-              f.len, numfacets, header.find("solid"), header.find("facet"))
+        except IOError as exc:
+            raise LoadFileError("STLImporter: Failed to read file ({}): {}".format(filename, exc))
 
-    if f.len == (84 + 50*numfacets):
-        binary = True
-    elif header.find("solid") >= 0 and header.find("facet") >= 0:
-        binary = False
-        f.seek(0)
-    else:
-        log.error("STLImporter: STL binary/ascii detection failed")
-        return None
+    # the facet count is only available for the binary format
+    facet_count = get_facet_count_if_binary_format(f)
+    is_binary = (facet_count is not None)
 
     if use_kdtree:
         kdtree = PointKdtree([], 3, 1, epsilon)
@@ -116,11 +123,13 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
     p2 = None
     p3 = None
 
-    if binary:
-        for i in range(1, numfacets + 1):
+    if is_binary:
+        # Skip the header and count fields of binary stl file
+        f.seek(HEADER_SIZE + COUNT_SIZE)
+
+        for i in range(1, facet_count + 1):
             if callback and callback():
-                log.warn("STLImporter: load model operation cancelled")
-                return None
+                raise AbortOperationException("STLImporter: load model operation cancelled")
             a1 = unpack("<f", f.read(4))[0]
             a2 = unpack("<f", f.read(4))[0]
             a3 = unpack("<f", f.read(4))[0]
@@ -131,19 +140,19 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
             v12 = unpack("<f", f.read(4))[0]
             v13 = unpack("<f", f.read(4))[0]
 
-            p1 = UniqueVertex(float(v11), float(v12), float(v13))
+            p1 = get_unique_vertex(float(v11), float(v12), float(v13))
 
             v21 = unpack("<f", f.read(4))[0]
             v22 = unpack("<f", f.read(4))[0]
             v23 = unpack("<f", f.read(4))[0]
 
-            p2 = UniqueVertex(float(v21), float(v22), float(v23))
+            p2 = get_unique_vertex(float(v21), float(v22), float(v23))
 
             v31 = unpack("<f", f.read(4))[0]
             v32 = unpack("<f", f.read(4))[0]
             v33 = unpack("<f", f.read(4))[0]
 
-            p3 = UniqueVertex(float(v31), float(v32), float(v33))
+            p3 = get_unique_vertex(float(v31), float(v32), float(v33))
 
             # not used (additional attributes)
             f.read(2)
@@ -174,6 +183,8 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
 
             model.append(t)
     else:
+        # from here on we want to use a text based input stream (not bytes)
+        f = TextIOWrapper(f, encoding="utf-8")
         solid = re.compile(r"\s*solid\s+(\w+)\s+.*")
         endsolid = re.compile(r"\s*endsolid\s*")
         facet = re.compile(r"\s*facet\s*")
@@ -193,8 +204,7 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
 
         for line in f:
             if callback and callback():
-                log.warn("STLImporter: load model operation cancelled")
-                return None
+                raise AbortOperationException("STLImporter: load model operation cancelled")
             current_line += 1
             m = solid.match(line)
             if m:
@@ -214,7 +224,8 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
                 continue
             m = vertex.match(line)
             if m:
-                p = UniqueVertex(float(m.group('x')), float(m.group('y')), float(m.group('z')))
+                p = get_unique_vertex(float(m.group('x')), float(m.group('y')),
+                                      float(m.group('z')))
                 if p1 is None:
                     p1 = p
                 elif p2 is None:
@@ -272,14 +283,14 @@ def ImportModel(filename, use_kdtree=True, callback=None, **kwargs):
             if m:
                 continue
 
-    log.info("Imported STL model: %d vertices, %d edges, %d triangles",
-             vertices, edges, len(model.triangles()))
+    # TODO display unique vertices and edges count - currently not counted
+    log.info("Imported STL model: %d triangles", len(model.triangles()))
     vertices = 0
     edges = 0
     kdtree = None
 
     if not model:
         # no valid items added to the model
-        return None
+        raise LoadFileError("Failed to load model from STL file: no elements found")
     else:
         return model

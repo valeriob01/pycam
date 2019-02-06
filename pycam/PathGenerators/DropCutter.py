@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010-2011 Lars Kruse <devel@sumpfralle.de>
 Copyright 2008-2009 Lode Leroy
@@ -40,10 +39,10 @@ def _process_one_grid_line(extra_args):
     return get_max_height_dynamic(model, cutter, positions, minz, maxz)
 
 
-class DropCutter(object):
+class DropCutter:
 
-    def GenerateToolPath(self, cutter, models, motion_grid, minz=None, maxz=None,
-                         draw_callback=None):
+    def generate_toolpath(self, cutter, models, motion_grid, minz=None, maxz=None,
+                          draw_callback=None):
         path = []
         quit_requested = False
         model = pycam.Geometry.Model.get_combined_model(models)

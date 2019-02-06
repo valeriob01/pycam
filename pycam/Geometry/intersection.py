@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008-2010 Lode Leroy
 
@@ -25,39 +24,6 @@ from pycam.Geometry.Line import Line
 from pycam.Geometry.PointUtils import padd, pcross, pdiv, pdot, pmul, pnorm, pnormalized, \
         pnormsq, psub
 from pycam.Utils.polynomials import poly4_roots
-
-
-def isNear(a, b):
-    return abs(a - b) < epsilon
-
-
-def isZero(a):
-    return isNear(a, 0)
-
-
-def intersect_lines(xl, zl, nxl, nzl, xm, zm, nxm, nzm):
-    X = None
-    Z = None
-    try:
-        if isZero(nzl) and isZero(nzm):
-            pass
-        elif isZero(nzl) or isZero(nxl):
-            X = xl
-            Z = zm + (xm - xl) * nxm / nzm
-            return (X, Z)
-        elif isZero(nzm) or isZero(nxm):
-            X = xm
-            Z = zl - (xm - xl) * nxl / nzl
-            return (X, Z)
-        else:
-            X = (zl - zm + (xm * nxm / nzm - xl * nxl / nzl)) \
-                    / (nxm / nzm - nxl / nzl)
-            if X and xl < X and X < xm:
-                Z = zl + (X - xl) * nxl / nzl
-                return (X, Z)
-    except ZeroDivisionError:
-        pass
-    return (None, None)
 
 
 def intersect_cylinder_point(center, axis, radius, radiussq, direction, point):
@@ -240,12 +206,12 @@ def intersect_sphere_point(center, radius, radiussq, direction, point):
     if d < 0:
         return (None, None, INFINITE)
     if a < 0:
-        l = (-b + sqrt(d)) / (2 * a)
+        dist = (-b + sqrt(d)) / (2 * a)
     else:
-        l = (-b - sqrt(d)) / (2 * a)
+        dist = (-b - sqrt(d)) / (2 * a)
     # cutter contact point
-    ccp = padd(point, pmul(direction, -l))
-    return (ccp, point, l)
+    ccp = padd(point, pmul(direction, -dist))
+    return (ccp, point, dist)
 
 
 def intersect_sphere_line(center, radius, radiussq, direction, edge):
@@ -313,8 +279,8 @@ def intersect_torus_point(center, axis, majorradius, minorradius, majorradiussq,
         l_sq = (point[0]-center[0]) ** 2 + (point[1] - center[1]) ** 2
         if (l_sq < minlsq + epsilon) or (l_sq > maxlsq - epsilon):
             return (None, None, INFINITE)
-        l = sqrt(l_sq)
-        z_sq = minorradiussq - (majorradius - l) ** 2
+        l_len = sqrt(l_sq)
+        z_sq = minorradiussq - (majorradius - l_len) ** 2
         if z_sq < 0:
             return (None, None, INFINITE)
         z = sqrt(z_sq)
@@ -325,12 +291,12 @@ def intersect_torus_point(center, axis, majorradius, minorradius, majorradiussq,
         z = point[2] - center[2]
         if abs(z) > minorradius - epsilon:
             return (None, None, INFINITE)
-        l = majorradius + sqrt(minorradiussq - z * z)
+        l_len = majorradius + sqrt(minorradiussq - z * z)
         n = pcross(axis, direction)
         d = pdot(n, point) - pdot(n, center)
-        if abs(d) > l - epsilon:
+        if abs(d) > l_len - epsilon:
             return (None, None, INFINITE)
-        a = sqrt(l * l - d * d)
+        a = sqrt(l_len * l_len - d * d)
         ccp = padd(padd(center, pmul(n, d)), pmul(direction, a))
         ccp = (ccp[0], ccp[1], point[2])
         dist = pdot(psub(point, ccp), direction)
@@ -345,18 +311,19 @@ def intersect_torus_point(center, axis, majorradius, minorradius, majorradiussq,
         x1_x1 = pdot(x1, x1)
         x1_v1 = pdot(x1, v1)
         v1_v1 = pdot(v1, v1)
-        R2 = majorradiussq
-        r2 = minorradiussq
+        r2_major = majorradiussq
+        r2_minor = minorradiussq
         a = 1.0
         b = 4 * x_v
-        c = 2 * (x_x + 2 * x_v ** 2 + (R2 - r2) - 2 * R2 * v1_v1)
-        d = 4 * (x_x * x_v + x_v * (R2 - r2) - 2 * R2 * x1_v1)
-        e = (x_x) ** 2 + 2 * x_x * (R2 - r2) + (R2 - r2) ** 2 - 4 * R2 * x1_x1
+        c = 2 * (x_x + 2 * x_v ** 2 + (r2_major - r2_minor) - 2 * r2_major * v1_v1)
+        d = 4 * (x_x * x_v + x_v * (r2_major - r2_minor) - 2 * r2_major * x1_v1)
+        e = ((x_x) ** 2 + 2 * x_x * (r2_major - r2_minor) + (r2_major - r2_minor) ** 2
+             - 4 * r2_major * x1_x1)
         r = poly4_roots(a, b, c, d, e)
         if not r:
             return (None, None, INFINITE)
         else:
-            l = min(r)
-        ccp = padd(point, pmul(direction, -l))
-        dist = l
+            l_len = min(r)
+        ccp = padd(point, pmul(direction, -l_len))
+        dist = l_len
     return (ccp, point, dist)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -34,9 +33,9 @@ class Log(pycam.Plugins.PluginBase):
     CATEGORIES = ["System"]
 
     def setup(self):
+        if not self._gtk:
+            return False
         if self.gui:
-            import gtk
-            self._gtk = gtk
             # menu item and shortcut
             log_action = self.gui.get_object("ToggleLogWindow")
             self._gtk_handlers = []
@@ -66,27 +65,27 @@ class Log(pycam.Plugins.PluginBase):
             # register a callback for the log window
             pycam.Utils.log.add_hook(self.add_log_message)
             self.register_gtk_handlers(self._gtk_handlers)
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self.log_window.hide()
             log_action = self.gui.get_object("ToggleLogWindow")
             self.core.unregister_ui("view_menu", log_action)
             self.unregister_gtk_accelerator("log", log_action)
             self.core.unregister_ui("main_window", self.gui.get_object("StatusBarEventBox"))
             self.core.unregister_ui("view_menu", self.gui.get_object("ToggleLogWindow"))
-            self.unregister_gtk_handlers(self._gtk_handlers)
             # TODO: disconnect the log handler
+        super().teardown()
 
     def add_log_message(self, title, message, record=None):
         timestamp = datetime.datetime.fromtimestamp(record.created).strftime("%H:%M")
         # avoid the ugly character for a linefeed
         message = " ".join(message.splitlines())
-        message = message.encode("utf-8", "ignore")
         self.log_model.append((timestamp, title, message))
         # update the status bar (if the GTK interface is still active)
-        if self.status_bar.window is not None:
+        if self.status_bar.get_parent() is not None:
             # remove the last message from the stack (probably not necessary)
             self.status_bar.pop(0)
             # push the new message
@@ -119,7 +118,7 @@ class Log(pycam.Plugins.PluginBase):
         checkbox_state = toggle_log_checkbox.get_active()
         if value is None:
             new_state = checkbox_state
-        elif isinstance(value, self._gtk.gdk.Event):
+        elif isinstance(value, self._gdk.Event):
             # someone clicked at the status bar -> toggle the window state
             new_state = not checkbox_state
         else:

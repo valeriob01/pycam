@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -18,9 +17,7 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import StringIO
-# imported later (on demand)
-# import gtk
+from io import StringIO
 
 import pycam.Plugins
 from pycam.Utils.locations import get_all_program_locations
@@ -41,11 +38,11 @@ class Clipboard(pycam.Plugins.PluginBase):
     CATEGORIES = ["System"]
 
     def setup(self):
+        if not self._gtk:
+            return False
         if self.gui:
-            import gtk
-            self._gtk = gtk
             self._gtk_handlers = []
-            self.clipboard = self._gtk.clipboard_get()
+            self.clipboard = self._gtk.Clipboard.get(self._gdk.SELECTION_PRIMARY)
             self.core.set("clipboard-set", self._copy_text_to_clipboard)
             self._gtk_handlers.append((self.clipboard, "owner-change",
                                        self._update_clipboard_widget))
@@ -65,23 +62,24 @@ class Clipboard(pycam.Plugins.PluginBase):
             self.register_event_handlers(self._event_handlers)
             self.register_gtk_handlers(self._gtk_handlers)
             self._update_clipboard_widget()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self.unregister_gtk_accelerator("clipboard", self.copy_action)
             self.core.unregister_ui("edit_menu", self.copy_action)
             self.unregister_gtk_accelerator("clipboard", self.paste_action)
             self.core.unregister_ui("edit_menu", self.paste_action)
-            self.unregister_event_handlers(self._event_handlers)
-            self.unregister_gtk_handlers(self._gtk_handlers)
             self.core.set("clipboard-set", None)
+        super().teardown()
 
     def _get_exportable_models(self):
         models = self.core.get("models").get_selected()
         exportable = []
         for model in models:
-            if model.model.is_export_supported():
+            if model.get_model().is_export_supported():
                 exportable.append(model)
         return exportable
 
@@ -108,9 +106,9 @@ class Clipboard(pycam.Plugins.PluginBase):
 
             if "svg" in "".join(targets).lower():
                 # Inkscape for Windows strictly requires the BITMAP type
-                clip_type = self._gtk.gdk.SELECTION_TYPE_BITMAP
+                clip_type = self._gdk.SELECTION_TYPE_BITMAP
             else:
-                clip_type = self._gtk.gdk.SELECTION_TYPE_STRING
+                clip_type = self._gdk.SELECTION_TYPE_STRING
             self.clipboard.set_with_data(clip_targets, get_func, lambda *args: None,
                                          (text, clip_type))
             self.clipboard.store()
@@ -119,18 +117,19 @@ class Clipboard(pycam.Plugins.PluginBase):
         models = self._get_exportable_models()
         if not models:
             return
-        text_buffer = StringIO.StringIO()
+        text_buffer = StringIO()
 
         # TODO: use a better way to discover the "merge" ability
         def same_type(m1, m2):
             return isinstance(m1, pycam.Geometry.Model.ContourModel) == \
                     isinstance(m2, pycam.Geometry.Model.ContourModel)
 
-        merged_model = models.pop(0).model
+        merged_model = models.pop(0).get_model()
         for model in models:
             # merge only 3D _or_ 2D models (don't mix them)
-            if same_type(merged_model, model.model):
-                merged_model += model.model
+            other_model = model.get_model()
+            if same_type(merged_model, other_model):
+                merged_model += other_model
         # TODO: add "comment=get_meta_data()" here
         merged_model.export(unit=self.core.get("unit")).write(text_buffer)
         text_buffer.seek(0)
@@ -148,10 +147,14 @@ class Clipboard(pycam.Plugins.PluginBase):
                                   (CLIPBOARD_TARGETS["ps"], "foo.ps"),
                                   (CLIPBOARD_TARGETS["dxf"], "foo.dxf")):
             for target in targets:
-                data = self.clipboard.wait_for_contents(target)
+                atom = self._gdk.Atom.intern(target, False)
+                data = self.clipboard.wait_for_contents(atom)
                 if data is not None:
-                    importer = pycam.Importers.detect_file_type(filename)[1]
-                    return data, importer
+                    detected_filetype = pycam.Importers.detect_file_type(filename)
+                    if detected_filetype:
+                        return data, detected_filetype.importer
+                    else:
+                        return None, None
         return None, None
 
     def paste_model_from_clipboard(self, widget=None):
@@ -159,7 +162,7 @@ class Clipboard(pycam.Plugins.PluginBase):
         progress = self.core.get("progress")
         if data:
             progress.update(text="Loading model from clipboard")
-            text_buffer = StringIO.StringIO(data.data)
+            text_buffer = StringIO(data.data)
             model = importer(text_buffer, program_locations=get_all_program_locations(self.core),
                              unit=self.core.get("unit"), fonts_cache=self.core.get("fonts"),
                              callback=progress.update)

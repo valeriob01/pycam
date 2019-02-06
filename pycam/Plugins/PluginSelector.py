@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -57,15 +56,16 @@ class PluginSelector(pycam.Plugins.PluginBase):
             self.core.register_event("plugin-list-changed", self._update_plugin_model)
             self.register_gtk_handlers(self._gtk_handlers)
             self._update_plugin_model()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self.plugin_window.hide()
             action = self.gui.get_object("TogglePluginWindow")
-            self.core.register_ui("view_menu", action)
+            self.core.unregister_ui("view_menu", action)
             self.core.unregister_event("plugin-list-changed", self._update_plugin_model)
-            self.unregister_gtk_handlers(self._gtk_handlers)
+        super().teardown()
 
     def toggle_plugin_window(self, widget=None, value=None, action=None):
         toggle_plugin_button = self.gui.get_object("TogglePluginWindow")
@@ -85,7 +85,7 @@ class PluginSelector(pycam.Plugins.PluginBase):
         # don't destroy the window with a "destroy" event
         return True
 
-    def _filter_set_visible(self, model, m_iter):
+    def _filter_set_visible(self, model, m_iter, data):
         manager = self.core.get("plugin-manager")
         status_filter = self.gui.get_object("StatusFilter")
         status_index = status_filter.get_active()
@@ -148,7 +148,7 @@ class PluginSelector(pycam.Plugins.PluginBase):
         self.gui.get_object("PluginsDescriptionColumn").queue_resize()
         self.gui.get_object("PluginsTable").queue_resize()
         # update the category filter
-        categories = categories.keys()
+        categories = list(categories.keys())
         categories.sort()
         categories.insert(0, "All categories")
         model = self.gui.get_object("CategoryList")

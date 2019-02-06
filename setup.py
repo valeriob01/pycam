@@ -1,5 +1,4 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 Copyright 2010 Arthur Magill
@@ -20,33 +19,13 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-try:
-    from setuptools import setup
-except ImportError:
-    from distutils.core import setup
-
 import glob
 import os.path
-import sys
-import shutil
+from setuptools import setup, find_packages
 
 from pycam import VERSION
 
 BASE_DIR = os.path.realpath(os.path.abspath(os.path.dirname(__file__)))
-
-WINDOWS_START_SCRIPT = os.path.join("scripts", "pycam-loader.py")
-DEFAULT_START_SCRIPT = os.path.join("scripts", "pycam")
-
-# we don't want to include the windows postinstall script in other installers
-is_windows_installer = "bdist_wininst" in sys.argv or "bdist_msi" in sys.argv
-
-if is_windows_installer:
-    shutil.copy2(os.path.join(BASE_DIR, DEFAULT_START_SCRIPT),
-                 os.path.join(BASE_DIR, WINDOWS_START_SCRIPT))
-    PLATFORM_SCRIPTS = [WINDOWS_START_SCRIPT,
-                        os.path.join("scripts", "pycam_win32_postinstall.py")]
-else:
-    PLATFORM_SCRIPTS = [DEFAULT_START_SCRIPT]
 
 
 setup(
@@ -57,21 +36,21 @@ setup(
     author="Lars Kruse",
     author_email="devel@sumpfralle.de",
     provides=["pycam"],
-    requires=["gtk", "gtk.gtkgl", "OpenGL"],
-    url="http://sourceforge.net/projects/pycam",
+    requires=["PyYAML"],
+    url="http://pycam.sourceforge.net/",
     download_url="http://sourceforge.net/projects/pycam/files",
     keywords=["3-axis", "cnc", "cam", "toolpath", "machining", "g-code"],
     long_description="""IMPORTANT NOTE: Please read the list of requirements:
-http://sourceforge.net/apps/mediawiki/pycam/index.php?title=Requirements
-Basically you will need Python, GTK and OpenGL.
+http://pycam.sourceforge.net/requirements
+Basically you will need Python3. GTK is recommended for interactive usage.
 
-Windows: select Python 2.5 in the following dialog.
+Windows: select Python 3.X in the following dialog.
 """,
     # full list of classifiers at:
     #   http://pypi.python.org/pypi?:action=list_classifiers
     classifiers=[
         "Programming Language :: Python",
-        "Programming Language :: Python :: 2",
+        "Programming Language :: Python :: 3",
         "Development Status :: 4 - Beta",
         "License :: OSI Approved :: GNU General Public License (GPL)",
         "Topic :: Scientific/Engineering",
@@ -82,26 +61,18 @@ Windows: select Python 2.5 in the following dialog.
         "Operating System :: MacOS :: MacOS X",
         "Operating System :: POSIX",
     ],
-    packages=[
-        "pycam",
-        "pycam.Cutters",
-        "pycam.Exporters",
-        "pycam.Exporters.GCode",
-        "pycam.Geometry",
-        "pycam.Gui",
-        "pycam.Importers",
-        "pycam.PathGenerators",
-        "pycam.PathProcessors",
-        "pycam.Physics",
-        "pycam.Plugins",
-        "pycam.Simulation",
-        "pycam.Toolpath",
-        "pycam.Utils",
-    ],
-    scripts=PLATFORM_SCRIPTS,
+    packages=find_packages(exclude=["pycam.Test"]),
+    entry_points={
+        "gui_scripts": [
+            "pycam = pycam.run_gui:main_func",
+        ],
+        "console_scripts": [
+            "pycam-cli = pycam.run_cli:main_func",
+        ],
+    },
     data_files=[
         ("share/pycam/doc", ["COPYING.TXT",
-                             "INSTALL.TXT",
+                             "INSTALL.md",
                              "LICENSE.TXT",
                              "README.md",
                              "Changelog",
@@ -113,8 +84,5 @@ Windows: select Python 2.5 in the following dialog.
         ("share/pycam/samples", glob.glob(os.path.join("samples", "*"))),
     ],
 )
-
-if is_windows_installer:
-    os.remove(os.path.join(BASE_DIR, WINDOWS_START_SCRIPT))
 
 # vim: tabstop=4 expandtab shiftwidth=4 softtabstop=4

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -22,7 +21,7 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 # import multiprocessing
 import os
 import platform
-import Queue
+import queue
 import random
 import signal
 import socket
@@ -30,7 +29,7 @@ import sys
 import time
 import uuid
 
-from pycam import CommunicationError
+from pycam.errors import CommunicationError
 import pycam.Utils
 import pycam.Utils.log
 log = pycam.Utils.log.get_logger()
@@ -91,7 +90,7 @@ def is_pool_available():
 
 
 def is_multiprocessing_available():
-    if (pycam.Utils.get_platform() == pycam.Utils.PLATFORM_WINDOWS) and \
+    if (pycam.Utils.get_platform() == pycam.Utils.OSPlatform.WINDOWS) and \
             hasattr(sys, "frozen") and sys.frozen:
         return False
     try:
@@ -117,8 +116,8 @@ def is_multiprocessing_enabled():
 
 
 def is_server_mode_available():
-    # the following definition should be kept in sync with the wiki:
-    # http://sf.net/apps/mediawiki/pycam/?title=Parallel_Processing_on_different_Platforms
+    # the following definition should be kept in sync with the documentation in
+    # docs/parallel-processing.md
     return is_multiprocessing_available()
 
 
@@ -160,7 +159,7 @@ def get_task_statistics():
     return result
 
 
-class ManagerInfo(object):
+class ManagerInfo:
     """ this separate class allows proper pickling for "multiprocesssing"
     """
 
@@ -198,8 +197,7 @@ def init_threading(number_of_processes=None, enable_server=False, remote=None, r
         # due to "pickle errors". How to reproduce: run the standalone binary
         # with "--enable-server --server-auth-key foo".
         feature_matrix_text = ("Take a look at the wiki for a matrix of platforms and available "
-                               "features: http://sf.net/apps/mediawiki/pycam/?title="
-                               "Parallel_Processing_on_different_Platforms")
+                               "features: http://pycam.sourceforge.net/parallel-processing")
         if enable_server:
             log.warn("Unable to enable server mode with your current setup.\n%s",
                      feature_matrix_text)
@@ -218,7 +216,7 @@ def init_threading(number_of_processes=None, enable_server=False, remote=None, r
         server_credentials = ""
     if not is_multiprocessing_available():
         __multiprocessing = False
-        # Maybe a multiprocessing feature was explicitely requested?
+        # Maybe a multiprocessing feature was explicitly requested?
         # Issue some warnings if necessary.
         multiprocessing_missing_text = (
             "Failed to enable server mode due to a lack of 'multiprocessing' capabilities. Please "
@@ -265,7 +263,7 @@ def init_threading(number_of_processes=None, enable_server=False, remote=None, r
         __task_source_uuid = str(uuid.uuid1())
         if remote is None:
             # try to guess an appropriate interface for binding
-            if pycam.Utils.get_platform() == pycam.Utils.PLATFORM_WINDOWS:
+            if pycam.Utils.get_platform() == pycam.Utils.OSPlatform.WINDOWS:
                 # Windows does not support a wildcard interface listener
                 all_ips = pycam.Utils.get_all_ips()
                 if all_ips:
@@ -426,7 +424,7 @@ def _handle_tasks(tasks, results, stats, cache, pending_tasks, closing):
             start_time = time.time()
             try:
                 job_id, task_id, func, args = tasks.get(timeout=0.2)
-            except Queue.Empty:
+            except queue.Empty:
                 time.sleep(1.8)
                 timeout_counter += 1
                 continue
@@ -551,7 +549,7 @@ def run_in_parallel_remote(func, args_list, unordered=False, disable_multiproces
                               stale_job_id, stale_task_id)
             try:
                 result_job_id, task_id, result = results_queue.get(timeout=1.0)
-            except Queue.Empty:
+            except queue.Empty:
                 time.sleep(1.0)
                 continue
             if result_job_id == job_id:
@@ -611,7 +609,7 @@ def _cleanup_job(job_id, tasks_queue, pending_tasks, finished_jobs):
     for index in range(queue_len):
         try:
             this_job_id, task_id, func, args = tasks_queue.get(timeout=0.1)
-        except Queue.Empty:
+        except queue.Empty:
             break
         if this_job_id != job_id:
             tasks_queue.put((this_job_id, task_id, func, args))
@@ -661,7 +659,7 @@ def run_in_parallel_local(func, args, unordered=False, disable_multiprocessing=F
             yield func(arg)
 
 
-class OneProcess(object):
+class OneProcess:
     def __init__(self, name, is_queue=False):
         self.is_queue = is_queue
         self.name = name
@@ -688,7 +686,7 @@ class OneProcess(object):
                 return "Process %s: not ready" % str(self.name)
 
 
-class ProcessStatistics(object):
+class ProcessStatistics:
 
     def __init__(self, timeout=120):
         self.processes = {}
@@ -740,7 +738,7 @@ class ProcessStatistics(object):
         now = time.time()
         result = []
         # Cache the key list instead of iterating it - otherwise a
-        # "RuntimeError: dictionary changed size during iteration" may occour.
+        # "RuntimeError: dictionary changed size during iteration" may occur.
         for key, worker_start_time in list(self.workers.items()):
             try:
                 one_process = self.processes[key]
@@ -758,7 +756,7 @@ class ProcessStatistics(object):
         return result
 
 
-class PendingTasks(object):
+class PendingTasks:
 
     def __init__(self, stale_timeout=300):
         # we assume that multiprocessing was imported before
@@ -798,7 +796,7 @@ class PendingTasks(object):
         stale_start_time = time.time() - self._stale_timeout
         stale_tasks = []
         # use a copy to prevent "dictionary changed size in iteration" errors
-        current_jobs = list(self._jobs.iteritems())
+        current_jobs = list(self._jobs.items())
         for (job_id, task_id), (start_time, info) in current_jobs:
             if start_time < stale_start_time:
                 stale_tasks.append((job_id, task_id, info))
@@ -815,7 +813,7 @@ class PendingTasks(object):
         return len(self._jobs)
 
 
-class ProcessDataCache(object):
+class ProcessDataCache:
 
     def __init__(self, timeout=600):
         self.cache = {}
@@ -867,7 +865,7 @@ class ProcessDataCache(object):
         return len(self.cache)
 
 
-class ProcessDataCacheItemID(object):
+class ProcessDataCacheItemID:
 
     def __init__(self, value):
         self.value = value

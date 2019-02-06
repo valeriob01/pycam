@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010-2011 Lars Kruse <devel@sumpfralle.de>
 Copyright 2008-2009 Lode Leroy
@@ -61,7 +60,7 @@ def _get_num_converter(step_width):
     return conv_func, format_string
 
 
-class GCodeGenerator(object):
+class GCodeGenerator:
 
     NUM_OF_AXES = 3
 

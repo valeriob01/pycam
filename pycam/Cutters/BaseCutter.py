@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008-2010 Lode Leroy
 Copyright 2010-2011 Lars Kruse <devel@sumpfralle.de>
@@ -32,7 +31,7 @@ class BaseCutter(IDGenerator):
     vertical = (0, 0, -1)
 
     def __init__(self, radius, location=None, height=None):
-        super(BaseCutter, self).__init__()
+        super().__init__()
         if location is None:
             location = (0, 0, 0)
         if height is None:
@@ -83,6 +82,21 @@ class BaseCutter(IDGenerator):
         See the ToroidalCutter for an example.
         """
         return self.radius < other.radius
+
+    def to_x3d(self, color):
+        yield '<Transform center="{:f} {:f} {:f}">'.format(self.center)
+        yield "<Shape>"
+        yield "<Appearance>"
+        yield ('<Material diffuseColor="{:f} {:f} {:f}" transparency="{:f}" />'
+               .format(color["red"], color["green"], color["blue"], 1 - color["alpha"]))
+        yield "</Appearance>"
+        yield from self.get_tool_x3d()
+        yield "</Shape>"
+        yield "</Transform>"
+
+    def get_tool_x3d(self):
+        """ every tool class should override this with an X3D representation of itself """
+        raise NotImplementedError
 
     def set_required_distance(self, value):
         if value >= 0:

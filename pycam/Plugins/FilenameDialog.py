@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -24,8 +23,7 @@ import pycam.Plugins
 import pycam.Utils
 
 
-def _get_filters_from_list(filter_list):
-    import gtk
+def _get_filters_from_list(gtk, filter_list):
     result = []
     for one_filter in filter_list:
         current_filter = gtk.FileFilter()
@@ -68,41 +66,44 @@ class FilenameDialog(pycam.Plugins.PluginBase):
     CATEGORIES = ["System"]
 
     def setup(self):
-        import gtk
-        self._gtk = gtk
-        self.last_dirname = None
-        self.core.set("get_filename_func", self.get_filename_dialog)
-        return True
+        if not self._gtk:
+            return False
+        else:
+            self.last_dirname = None
+            self.core.set("get_filename_func", self.get_filename_dialog)
+            return super().setup()
 
     def teardown(self):
         self.core.set("get_filename_func", None)
+        super().teardown()
 
     def get_filename_dialog(self, title="Choose file ...", mode_load=False, type_filter=None,
                             filename_templates=None, filename_extension=None, parent=None,
                             extra_widget=None):
-        gtk = self._gtk
         if parent is None:
             parent = self.core.get("main_window")
         # we open a dialog
         if mode_load:
-            action = gtk.FILE_CHOOSER_ACTION_OPEN
-            stock_id_ok = gtk.STOCK_OPEN
+            action = self._gtk.FileChooserAction.OPEN
+            stock_id_ok = self._gtk.STOCK_OPEN
         else:
-            action = gtk.FILE_CHOOSER_ACTION_SAVE
-            stock_id_ok = gtk.STOCK_SAVE
-        dialog = gtk.FileChooserDialog(title=title, parent=parent, action=action,
-                                       buttons=(gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL, stock_id_ok,
-                                                gtk.RESPONSE_OK))
+            action = self._gtk.FileChooserAction.SAVE
+            stock_id_ok = self._gtk.STOCK_SAVE
+        dialog = self._gtk.FileChooserDialog(title=title, parent=parent, action=action,
+                                             buttons=(self._gtk.STOCK_CANCEL,
+                                                      self._gtk.ResponseType.CANCEL,
+                                                      stock_id_ok,
+                                                      self._gtk.ResponseType.OK))
         # set the initial directory to the last one used
         if self.last_dirname and os.path.isdir(self.last_dirname):
             dialog.set_current_folder(self.last_dirname)
         # add extra parts
         if extra_widget:
             extra_widget.show_all()
-            dialog.get_content_area().pack_start(extra_widget, expand=False)
+            dialog.get_content_area().pack_start(extra_widget, expand=False, fill=False, padding=0)
         # add filter for files
         if type_filter:
-            for file_filter in _get_filters_from_list(type_filter):
+            for file_filter in _get_filters_from_list(self._gtk, type_filter):
                 dialog.add_filter(file_filter)
         # guess the export filename based on the model's filename
         valid_templates = []
@@ -132,13 +133,9 @@ class FilenameDialog(pycam.Plugins.PluginBase):
                         # finish the loop
                         break
             dialog.select_filename(default_filename)
-            try:
-                dialog.set_current_name(os.path.basename(default_filename).encode("utf-8"))
-            except UnicodeError:
-                # ignore
-                pass
+            dialog.set_current_name(os.path.basename(default_filename))
         # add filter for all files
-        ext_filter = gtk.FileFilter()
+        ext_filter = self._gtk.FileFilter()
         ext_filter.set_name("All files")
         ext_filter.add_pattern("*")
         dialog.add_filter(ext_filter)
@@ -149,23 +146,24 @@ class FilenameDialog(pycam.Plugins.PluginBase):
             filename = dialog.get_filename()
             uri = pycam.Utils.URIHandler(filename)
             dialog.hide()
-            if response != gtk.RESPONSE_OK:
+            if response != self._gtk.ResponseType.OK:
                 dialog.destroy()
                 return None
             if not mode_load and filename:
                 # check if we want to add a default suffix
                 filename = _get_filename_with_suffix(filename, type_filter)
             if not mode_load and os.path.exists(filename):
-                overwrite_window = gtk.MessageDialog(
-                    parent, type=gtk.MESSAGE_WARNING, buttons=gtk.BUTTONS_YES_NO,
+                overwrite_window = self._gtk.MessageDialog(
+                    parent, type=self._gtk.MessageType.WARNING,
+                    buttons=self._gtk.ButtonsType.YES_NO,
                     message_format="This file exists. Do you want to overwrite it?")
                 overwrite_window.set_title("Confirm overwriting existing file")
                 response = overwrite_window.run()
                 overwrite_window.destroy()
-                done = (response == gtk.RESPONSE_YES)
+                done = (response == self._gtk.ResponseType.YES)
             elif mode_load and not uri.exists():
-                not_found_window = gtk.MessageDialog(
-                    parent, type=gtk.MESSAGE_ERROR, buttons=gtk.BUTTONS_OK,
+                not_found_window = self._gtk.MessageDialog(
+                    parent, type=self._gtk.MessageType.ERROR, buttons=self._gtk.ButtonsType.OK,
                     message_format="This file does not exist. Please choose a different filename.")
                 not_found_window.set_title("Invalid filename selected")
                 response = not_found_window.run()
@@ -178,8 +176,5 @@ class FilenameDialog(pycam.Plugins.PluginBase):
         dialog.destroy()
         # add the file to the list of recently used ones
         if filename:
-            if mode_load:
-                self.core.emit_event("notify-file-opened", filename)
-            else:
-                self.core.emit_event("notify-file-saved", filename)
+            self.core.get("set_last_filename")(filename)
         return filename

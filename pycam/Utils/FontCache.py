@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -21,6 +19,7 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
 
+import pycam.Importers.CXFImporter
 import pycam.Utils.log
 
 
@@ -30,7 +29,7 @@ DEFAULT_NAMES = ("normal", "default", "standard")
 log = pycam.Utils.log.get_logger()
 
 
-class FontCache(object):
+class FontCache:
     """ The FontCache gradually loads fonts. This is more efficient than an
     immeadiate initialization of all fonts for the DXF importer.
     Use "get_font" for loading (incrementally) fonts until the requested font

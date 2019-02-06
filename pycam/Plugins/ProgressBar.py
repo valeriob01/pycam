@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -23,6 +22,7 @@ import os
 import time
 
 import pycam.Plugins
+from pycam.Utils.events import get_mainloop
 
 
 class ProgressBar(pycam.Plugins.PluginBase):
@@ -31,11 +31,14 @@ class ProgressBar(pycam.Plugins.PluginBase):
     CATEGORIES = ["System"]
 
     def setup(self):
+        if not self._gtk:
+            return False
         if self.gui:
             box = self.gui.get_object("ProgressBox")
             box.unparent()
             self.core.register_ui("main_window", "Progress", box, 50)
-            self.core.add_item("progress", lambda: ProgressGTK(self.core, self.gui, self.log))
+            self.core.add_item("progress",
+                               lambda: ProgressGTK(self.core, self.gui, self._gtk, self.log))
             show_progress_button = self.gui.get_object("ShowToolpathProgressButton")
             # TODO: move this setting somewhere else or rename it
             self.core.add_item("show_toolpath_progress", show_progress_button.get_active,
@@ -44,22 +47,22 @@ class ProgressBar(pycam.Plugins.PluginBase):
             self._gtk_handlers.append((show_progress_button, "clicked",
                                        lambda widget: self.core.emit_event("visual-item-updated")))
             self.register_gtk_handlers(self._gtk_handlers)
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
             self.unregister_gtk_handlers(self._gtk_handlers)
             self.core.unregister_ui("main_window", self.gui.get_object("ProgressBox"))
         self.core.set("progress", None)
+        super().teardown()
 
 
-class ProgressGTK(object):
+class ProgressGTK:
 
     _PROGRESS_STACK = []
 
-    def __init__(self, core, gui, log):
+    def __init__(self, core, gui, gtk, log):
         ProgressGTK._PROGRESS_STACK.append(self)
-        import gtk
         self._finished = False
         self._gtk = gtk
         self._gui = gui
@@ -71,14 +74,13 @@ class ProgressGTK(object):
         self._multi_counter = 0
         self._multi_base_text = ""
         self._last_gtk_events_time = None
-        self._main_widget = self._gui.get_object("ProgressWidget")
+        self._main_widget = self._gui.get_object("ProgressBox")
         self._multi_widget = self._gui.get_object("MultipleProgressBar")
         self._cancel_button = self._gui.get_object("ProgressCancelButton")
         self._cancel_button.connect("clicked", self.cancel)
         self._progress_bar = self._gui.get_object("ProgressBar")
         self._progress_button = self._gui.get_object("ShowToolpathProgressButton")
         self._start_time = time.time()
-        self._progress_button.show()
         self._last_text = None
         self._last_percent = None
         self.update(text="", percent=0)
@@ -211,8 +213,7 @@ class ProgressGTK(object):
             # TODO: move "in_progress" somewhere else
             if self.core.get("toolpath_in_progress"):
                 self._progress_button.show()
-            while self._gtk.events_pending():
-                self._gtk.main_iteration()
+            get_mainloop().update()
             if not text or (self._start_time + 5 < current_time):
                 # We don't store the timining if the text was changed.
                 # This is especially nice for the snappines during font

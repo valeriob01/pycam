@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -18,9 +17,10 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+from io import StringIO
 import os
 import re
-import StringIO
+
 
 from pycam.Geometry.Letters import TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER, TEXT_ALIGN_RIGHT
 import pycam.Plugins
@@ -29,7 +29,6 @@ from pycam.Utils.locations import get_font_dir
 
 
 class Fonts(pycam.Plugins.PluginBase):
-
     UI_FILE = "fonts.ui"
     DEPENDS = ["Clipboard"]
     CATEGORIES = ["Fonts"]
@@ -38,9 +37,7 @@ class Fonts(pycam.Plugins.PluginBase):
         self._fonts_cache = pycam.Utils.FontCache.FontCache(get_font_dir(), core=self.core)
         self.core.set("fonts", self._fonts_cache)
         # "font dialog" window
-        if self.gui:
-            import gtk
-            self._gtk = gtk
+        if self.gui and self._gtk:
             self.font_dialog_window = self.gui.get_object("FontDialog")
             window = self.font_dialog_window
             hide_window = lambda *args: self.toggle_font_dialog_window(state=False)
@@ -55,9 +52,9 @@ class Fonts(pycam.Plugins.PluginBase):
                 (self.gui.get_object("FontDialogInputBuffer"), "changed",
                  self.update_font_dialog_preview),
                 (self.gui.get_object("FontDialogPreview"), "configure_event",
-                 self.update_font_dialog_preview),
-                (self.gui.get_object("FontDialogPreview"), "expose_event",
                  self.update_font_dialog_preview)]
+            # (self.gui.get_object("FontDialogPreview"), "expose_event",  FIXME
+            #  self.update_font_dialog_preview)]
             for objname in ("FontSideSkewValue", "FontCharacterSpacingValue",
                             "FontLineSpacingValue"):
                 obj = self.gui.get_object(objname)
@@ -80,16 +77,17 @@ class Fonts(pycam.Plugins.PluginBase):
             self._font_dialog_window_position = None
             self.font_selector = None
             self.register_gtk_handlers(self._gtk_handlers)
-        return True
+        return super().setup()
 
     def teardown(self):
-        del self.core["fonts"]
-        if self.gui:
+        if self.gui and self._gtk:
+            self.unregister_gtk_handlers(self._gtk_handlers)
             font_toggle = self.gui.get_object("ShowFontDialog")
             self.core.unregister_ui("edit_menu", None)
             self.core.unregister_ui("edit_menu", font_toggle)
             self.unregister_gtk_accelerator("fonts", font_toggle)
-            self.unregister_gtk_handlers(self._gtk_handlers)
+        del self.core["fonts"]
+        super().teardown()
 
     def toggle_font_dialog_window(self, widget=None, event=None, state=None):
         # only "delete-event" uses four arguments
@@ -164,7 +162,9 @@ class Fonts(pycam.Plugins.PluginBase):
     def import_from_font_dialog(self, widget=None):
         text_model = self.get_font_dialog_text_rendered()
         name = "Text " + re.sub(r"\W", "", self._get_text_from_input())[:10]
-        self.core.get("models").add_model(text_model, name=name)
+        # TODO: implement "get_dump" (or "serialize" or ...)
+        model_params = {"source": {"type": "object", "data": text_model.get_dump()}}
+        self.core.get("models").add_model(model_params, name=name)
         self.toggle_font_dialog_window()
 
     def export_from_font_dialog(self, widget=None):
@@ -175,7 +175,7 @@ class Fonts(pycam.Plugins.PluginBase):
     def copy_font_dialog_to_clipboard(self, widget=None):
         text_model = self.get_font_dialog_text_rendered()
         if text_model and (text_model.maxx is not None):
-            text_buffer = StringIO.StringIO()
+            text_buffer = StringIO()
             # TODO: add "comment=get_meta_data()"
             text_model.export(unit=self.core.get("unit")).write(text_buffer)
             text_buffer.seek(0)
@@ -197,7 +197,7 @@ class Fonts(pycam.Plugins.PluginBase):
         text_model = self.get_font_dialog_text_rendered()
         # always clean the background
         x, y, width, height = preview_widget.get_allocation()
-        drawing_area = self._gtk.gdk.Pixmap(final_drawing_area, width, height)
+        drawing_area = self._gdk.Pixmap(final_drawing_area, width, height)
         drawing_area.draw_rectangle(preview_widget.get_style().white_gc, True, 0, 0, width, height)
         # carefully check if there are lines in the rendered text
         if text_model and (text_model.maxx is not None) and (text_model.maxx > text_model.minx):

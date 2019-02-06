@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -22,18 +21,12 @@ from pycam.Geometry import epsilon, number, TransformableContainer, IDGenerator
 from pycam.Geometry.Line import Line
 from pycam.Geometry.Plane import Plane
 from pycam.Geometry.PointUtils import padd, pcross, pdist, pdiv, pdot, pis_inside, pmul, pnorm, \
-        pnormsq, pnormalized, psub
+        pnormalized, psub
 from pycam.Geometry.utils import get_bisector
 from pycam.Utils import log
 log = log.get_logger()
 # import later to avoid circular imports
 # from pycam.Geometry.Model import ContourModel
-
-try:
-    import OpenGL.GL as GL
-    GL_enabled = True
-except ImportError:
-    GL_enabled = False
 
 
 LINE_WIDTH_INNER = 0.7
@@ -44,10 +37,8 @@ class PolygonInTree(IDGenerator):
     """ This class is a wrapper around Polygon objects that is used for sorting.
     """
 
-    next_id = 0
-
     def __init__(self, polygon):
-        super(PolygonInTree, self).__init__()
+        super().__init__()
         self.start = polygon.get_points()[0]
         self.end = polygon.get_points()[-1]
         self.polygon = polygon
@@ -66,17 +57,11 @@ class PolygonInTree(IDGenerator):
         if self.polygon.is_polygon_inside(other.polygon):
             self.children.append(other)
 
-    def remove_child(self, other):
-        try:
-            self.children.remove(other)
-        except ValueError:
-            pass
-
     def get_cost(self, other):
         return pdist(other.start, self.end)
 
 
-class PolygonPositionSorter(object):
+class PolygonPositionSorter:
     """ sort PolygonInTree objects for a minimized way length.
     The sorter takes care that no polygons are processed before their children
     (inside polygons).
@@ -157,7 +142,7 @@ class PolygonPositionSorter(object):
         return result
 
 
-class PolygonSorter(object):
+class PolygonSorter:
     """ sort Plygon instances according to the following rules:
     * inner polygons first (with no inside polygons)
     * inner polygons with inside polygons that are already processed
@@ -214,7 +199,7 @@ class PolygonSorter(object):
 class Polygon(TransformableContainer):
 
     def __init__(self, plane=None):
-        super(Polygon, self).__init__()
+        super().__init__()
         if plane is None:
             # the default plane points upwards along the z axis
             plane = Plane((0, 0, 0), (0, 0, 1, 'v'))
@@ -277,7 +262,18 @@ class Polygon(TransformableContainer):
                 self.reset_cache()
 
     def __len__(self):
-        return len(self._points)
+        if self.is_closed:
+            return len(self._points) + 1
+        else:
+            return len(self._points)
+
+    def __bool__(self):
+        return len(self._points) > 0
+
+    def __iter__(self):
+        yield from self._points
+        if self.is_closed:
+            yield self._points[0]
 
     def __str__(self):
         if self.is_closed:
@@ -298,12 +294,13 @@ class Polygon(TransformableContainer):
     def is_connectable(self, line_or_point):
         if self.is_closed:
             return False
-        elif not self._points:
-            # empty polygons can be connected with any line
+        if not self._points:
+            # empty polygons can be connected with any line or point
             return True
-        if hasattr(line_or_point, "get_length_line"):
-            # it is a line
+        if isinstance(line_or_point, Line):
             line = line_or_point
+            # Test if the line can be connected to the start or the end of the polygon.
+            # The direction of the line is respected.
             if line.p1 == self._points[-1]:
                 return True
             elif line.p2 == self._points[0]:
@@ -311,11 +308,11 @@ class Polygon(TransformableContainer):
             else:
                 return False
         else:
-            # it is a point
             point = line_or_point
+            # Test if the point equals the first or the last point of the polygon.
             return (point == self._points[-1]) or (point == self._points[0])
 
-    def next(self):
+    def __next__(self):
         yield "_points"
         yield self.plane
 
@@ -503,9 +500,7 @@ class Polygon(TransformableContainer):
         return self._points[:]
 
     def get_lines(self):
-        """ Caching is necessary to avoid constant recalculation due to
-        the "to_OpenGL" method.
-        """
+        """ Caching is necessary to avoid constant recalculation for visualization. """
         if self._lines_cache is None:
             # recalculate the line cache
             lines = []
@@ -517,30 +512,6 @@ class Polygon(TransformableContainer):
                 lines.append(Line(self._points[-1], self._points[0]))
             self._lines_cache = lines
         return self._lines_cache[:]
-
-    def to_OpenGL(self, **kwords):
-        if not GL_enabled:
-            return
-        GL.glDisable(GL.GL_LIGHTING)
-        if self.is_closed:
-            is_outer = self.is_outer()
-            if not is_outer:
-                color = GL.glGetFloatv(GL.GL_CURRENT_COLOR)
-                GL.glColor(color[0], color[1], color[2], color[3] / 2)
-                GL.glLineWidth(LINE_WIDTH_INNER)
-            else:
-                GL.glLineWidth(LINE_WIDTH_OUTER)
-            GL.glBegin(GL.GL_LINE_LOOP)
-            for point in self._points:
-                GL.glVertex3f(point[0], point[1], point[2])
-            GL.glEnd()
-            if not is_outer:
-                GL.glColor(*color)
-            # reset line width
-            GL.glLineWidth(1.0)
-        else:
-            for line in self.get_lines():
-                line.to_OpenGL(**kwords)
 
     def _update_limits(self, point):
         if self.minx is None:
@@ -576,18 +547,19 @@ class Polygon(TransformableContainer):
         p3 = self._points[(index + 1) % len(self._points)]
         return get_bisector(p1, p2, p3, self.plane.n)
 
+    def get_shifted_vertex(self, index, offset):
+        p1 = self._points[index]
+        p2 = self._points[(index + 1) % len(self._points)]
+        cross_offset = pnormalized(pcross(psub(p2, p1), self.plane.n))
+        bisector_normalized = self.get_bisector(index)
+        factor = pdot(cross_offset, bisector_normalized)
+        if factor != 0:
+            bisector_sized = pmul(bisector_normalized, offset / factor)
+            return padd(p1, bisector_sized)
+        else:
+            return p2
+
     def get_offset_polygons_validated(self, offset):
-        def get_shifted_vertex(index, offset):
-            p1 = self._points[index]
-            p2 = self._points[(index + 1) % len(self._points)]
-            cross_offset = pnormalized(pcross(psub(p2, p1), self.plane.n))
-            bisector_normalized = self.get_bisector(index)
-            factor = pdot(cross_offset, bisector_normalized)
-            if factor != 0:
-                bisector_sized = pmul(bisector_normalized, offset / factor)
-                return padd(p1, bisector_sized)
-            else:
-                return p2
         if self.is_outer():
             inside_shifting = max(0, -offset)
         else:
@@ -597,7 +569,7 @@ class Polygon(TransformableContainer):
             return []
         points = []
         for index in range(len(self._points)):
-            points.append(get_shifted_vertex(index, offset))
+            points.append(self.get_shifted_vertex(index, offset))
         max_dist = 1000 * epsilon
 
         def test_point_near(p, others):
@@ -717,7 +689,7 @@ class Polygon(TransformableContainer):
                 split_here = True
             if split_here:
                 split_here = False
-                # check if any preceeding group fits to the point
+                # check if any preceding group fits to the point
                 for index, group in enumerate(groups):
                     if not group:
                         continue
@@ -814,7 +786,7 @@ class Polygon(TransformableContainer):
                         upper = middle
                     else:
                         if depth > 0:
-                            # the original polygon was splitted or modified
+                            # the original polygon was split or modified
                             print("Next level: %s" % str(middle))
                             shifted_sub_polygons = []
                             for sub_poly in result:
@@ -833,18 +805,6 @@ class Polygon(TransformableContainer):
         return result_polygons
 
     def get_offset_polygons(self, offset, callback=None):
-        def get_shifted_vertex(index, offset):
-            p1 = self._points[index]
-            p2 = self._points[(index + 1) % len(self._points)]
-            cross_offset = pnormalized(pcross(psub(p2, p1), self.plane.n))
-            bisector_normalized = self.get_bisector(index)
-            factor = pdot(cross_offset, bisector_normalized)
-            if factor != 0:
-                bisector_sized = pmul(bisector_normalized, offset / factor)
-                return padd(p1, bisector_sized)
-            else:
-                return p2
-
         def simplify_polygon_intersections(lines):
             new_group = lines[:]
             # remove all non-adjacent intersecting lines (this splits the group)
@@ -949,7 +909,7 @@ class Polygon(TransformableContainer):
             return []
         points = []
         for index in range(len(self._points)):
-            points.append(get_shifted_vertex(index, offset))
+            points.append(self.get_shifted_vertex(index, offset))
         new_lines = []
         for index in range(len(points) - 1):
             p1 = points[index]
@@ -994,194 +954,6 @@ class Polygon(TransformableContainer):
             if not result:
                 log.debug("Skipping offset polygon: polygon is inside of another one")
             return result
-
-    def get_offset_polygons_old(self, offset):
-        def get_parallel_line(line, offset):
-            if offset == 0:
-                return Line(line.p1, line.p2)
-            else:
-                cross_offset = pmul(pnormalized(pcross(line.dir, self.plane.n)), offset)
-                # Prolong the line at the beginning and at the end - to allow
-                # overlaps. Use factor "2" to take care for star-like structure
-                # where a complete convex triangle would get cropped (two lines
-                # get lost instead of just one). Use the "abs" value to
-                # compensate negative offsets.
-                in_line = pmul(line.dir, 2 * abs(offset))
-                return Line(psub(padd(line.p1, cross_offset), in_line),
-                            padd(padd(line.p2, cross_offset), in_line))
-
-        def do_lines_intersection(l1, l2):
-            """ calculate the new intersection between two neighbouring lines
-            """
-            # TODO: use Line.get_intersection instead of the code below
-            if l1.p2 == l2.p1:
-                # intersection is already fine
-                return
-            if (l1.p1 is None) or (l2.p1 is None):
-                # one line was already marked as obsolete
-                return
-            x1, x2, x3, x4 = l2.p1, l2.p2, l1.p1, l1.p2
-            a = psub(x2, x1)
-            b = psub(x4, x3)
-            c = psub(x3, x1)
-            # see http://mathworld.wolfram.com/Line-LineIntersection.html (24)
-            try:
-                factor = pdot(pcross(c, b), pcross(a, b)) / pnormsq(pcross(a, b))
-            except ZeroDivisionError:
-                l2.p1 = None
-                return
-            if not (0 <= factor < 1):
-                # The intersection is always supposed to be within p1 and p2.
-                l2.p1 = None
-            else:
-                intersection = padd(x1, pmul(a, factor))
-                if Line(l1.p1, intersection).dir != l1.dir:
-                    # Remove lines that would change their direction due to the
-                    # new intersection. These are usually lines that become
-                    # obsolete due to a more favourable intersection of the two
-                    # neighbouring lines. This appears at small corners.
-                    l1.p1 = None
-                elif Line(intersection, l2.p2).dir != l2.dir:
-                    # see comment above
-                    l2.p1 = None
-                elif l1.p1 == intersection:
-                    # remove invalid lines (zero length)
-                    l1.p1 = None
-                elif l2.p2 == intersection:
-                    # remove invalid lines (zero length)
-                    l2.p1 = None
-                else:
-                    # shorten both lines according to the new intersection
-                    l1.p2 = intersection
-                    l2.p1 = intersection
-
-        def simplify_polygon_intersections(lines):
-            finished = False
-            new_group = lines[:]
-            while not finished:
-                if len(new_group) > 1:
-                    # Calculate new intersections for each pair of adjacent
-                    # lines.
-                    for index in range(len(new_group)):
-                        if (index == 0) and (not self.is_closed):
-                            # skip the first line if the group is not closed
-                            continue
-                        # this also works for index==0 (closed groups)
-                        l1 = new_group[index - 1]
-                        l2 = new_group[index]
-                        do_lines_intersection(l1, l2)
-                # Remove all lines that were marked as obsolete during
-                # intersection calculation.
-                clean_group = [line for line in new_group if line.p1 is not None]
-                finished = len(new_group) == len(clean_group)
-                if (len(clean_group) == 1) and self.is_closed:
-                    new_group = []
-                    finished = True
-                else:
-                    new_group = clean_group
-            # remove all non-adjacent intersecting lines (this splits the group)
-            if len(new_group) > 0:
-                group_starts = []
-                index1 = 0
-                while index1 < len(new_group):
-                    index2 = 0
-                    while index2 < len(new_group):
-                        index_distance = min(abs(index2 - index1),
-                                             abs(len(new_group) - (index2 - index1)))
-                        # skip neighbours
-                        if index_distance > 1:
-                            line1 = new_group[index1]
-                            line2 = new_group[index2]
-                            intersection, factor = line1.get_intersection(line2)
-                            if intersection and (intersection != line1.p1) \
-                                    and (intersection != line1.p2):
-                                del new_group[index1]
-                                new_group.insert(index1, Line(line1.p1, intersection))
-                                new_group.insert(index1 + 1, Line(intersection, line1.p2))
-                                # Shift all items in "group_starts" by one if
-                                # they reference a line whose index changed.
-                                for i in range(len(group_starts)):
-                                    if group_starts[i] > index1:
-                                        group_starts[i] += 1
-                                if index1 + 1 not in group_starts:
-                                    group_starts.append(index1 + 1)
-                                # don't update index2 -> maybe there are other hits
-                            elif intersection and (intersection == line1.p1):
-                                if index1 not in group_starts:
-                                    group_starts.append(index1)
-                                index2 += 1
-                            else:
-                                index2 += 1
-                        else:
-                            index2 += 1
-                    index1 += 1
-                # The lines intersect each other
-                # We need to split the group.
-                if len(group_starts) > 0:
-                    group_starts.sort()
-                    groups = []
-                    last_start = 0
-                    for group_start in group_starts:
-                        groups.append(new_group[last_start:group_start])
-                        last_start = group_start
-                    # Add the remaining lines to the first group or as a new
-                    # group.
-                    if groups[0][0].p1 == new_group[-1].p2:
-                        groups[0] = new_group[last_start:] + groups[0]
-                    else:
-                        groups.append(new_group[last_start:])
-                    # try to find open groups that can be combined
-                    combined_groups = []
-                    for index, current_group in enumerate(groups):
-                        # Check if the group is not closed: try to add it to
-                        # other non-closed groups.
-                        if current_group[0].p1 == current_group[-1].p2:
-                            # a closed group
-                            combined_groups.append(current_group)
-                        else:
-                            # the current group is open
-                            for other_group in groups[index + 1:]:
-                                if other_group[0].p1 != other_group[-1].p2:
-                                    # This group is also open - a candidate
-                                    # for merging?
-                                    if other_group[0].p1 == current_group[-1].p2:
-                                        current_group.reverse()
-                                        for line in current_group:
-                                            other_group.insert(0, line)
-                                        break
-                                    if other_group[-1].p2 == current_group[0].p1:
-                                        other_group.extend(current_group)
-                                        break
-                            else:
-                                # not suitable open group found
-                                combined_groups.append(current_group)
-                    return combined_groups
-                else:
-                    # just return one group without intersections
-                    return [new_group]
-            else:
-                return None
-
-        new_lines = []
-        for line in self.get_lines():
-            new_lines.append(get_parallel_line(line, offset))
-        cleaned_line_groups = simplify_polygon_intersections(new_lines)
-        if cleaned_line_groups is None:
-            return None
-        else:
-            # remove all groups with a toggled direction
-            self_is_outer = self.is_outer()
-            groups = []
-            for lines in cleaned_line_groups:
-                group = Polygon(self.plane)
-                for line in lines:
-                    group.append(line)
-                if group.is_outer() == self_is_outer:
-                    # We ignore groups that changed the direction. These
-                    # parts of the original group are flipped due to the
-                    # offset.
-                    groups.append(group)
-            return groups
 
     def get_cropped_polygons(self, minx, maxx, miny, maxy, minz, maxz):
         """ crop a line group according to a 3d bounding box
@@ -1271,7 +1043,7 @@ class Polygon(TransformableContainer):
                 # sort the collisions according to the distance
                 collisions.append((line.p1, 0))
                 collisions.append((line.p2, 1))
-                collisions.sort(key=lambda cp, dist: dist)
+                collisions.sort(key=lambda collision: collision[1])
                 for index in range(len(collisions) - 1):
                     p1 = collisions[index][0]
                     p2 = collisions[index + 1][0]
@@ -1317,8 +1089,8 @@ class Polygon(TransformableContainer):
             cp, d = proj_line.get_intersection(pline)
             if cp:
                 intersections.append((cp, d))
-        # sort the intersections
-        intersections.sort(key=lambda cp, d: d)
+        # sort the intersections by distance
+        intersections.sort(key=lambda collision: collision[1])
         intersections.insert(0, (proj_line.p1, 0))
         intersections.append((proj_line.p2, 1))
 

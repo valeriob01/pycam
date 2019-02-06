@@ -67,7 +67,7 @@ SVG import: postoedit reports a missing MSVCR100.dll library \[only Windows\]
 
 After installing *inkscape*, *pstoedit* and *ghostscript* the import of
 SVG files fails with an an error report referring to a missing library
-MSVCR100.dll.
+MSVCR100.dll (only relevant for PyCAM before v0.7).
 
 pstoedit v3.60 (or later) depends on the MS Visual C++ 2010 library.
 Thus you have to options to solve this issue:
@@ -116,8 +116,8 @@ Toolpaths for 2D models
 I can't open SVG files
 ----------------------
 
-PyCAM contains no built-in support for SVG. Thus you need to install
-[Inkscape](http://inkscape.org) and
+PyCAM (before v0.7) contains no built-in support for SVG. Thus you
+needed to install [Inkscape](http://inkscape.org) and
 [pstoedit](http://www.pstoedit.net/pstoedit).
 
 See the list of
@@ -140,7 +140,7 @@ Rapid moves are placed below the model instead of above
 -------------------------------------------------------
 
 Probably you need to adjust the *safety height* (see *GCode settings*)
-accoding to the height of your model. Alternatively you could also shift
+according to the height of your model. Alternatively you could also shift
 the model down to z=0.
 
 Toolpaths with an offset are placed inside of the model instead of outside

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2008 Lode Leroy
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
@@ -19,35 +18,39 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+import collections
+
 import pycam.Utils
 import pycam.Utils.log
 
 
-log = pycam.Utils.log.get_logger()
+_log = pycam.Utils.log.get_logger()
+
+
+DetectedFileType = collections.namedtuple("DetectedFileType", ("extension", "importer", "uri"))
 
 
 def detect_file_type(filename, quiet=False):
     import pycam.Importers.DXFImporter
     import pycam.Importers.PSImporter
     import pycam.Importers.STLImporter
-    import pycam.Importers.SVGImporter
+    from pycam.Importers.SVGDirectImporter import import_model as import_model_from_svg
     # also accept URI input
     uri = pycam.Utils.URIHandler(filename)
     filename = uri.get_path()
-    failure = (None, None)
     # check all listed importers
     # TODO: this should be done by evaluating the header of the file
     if filename.lower().endswith(".stl"):
-        return ("stl", pycam.Importers.STLImporter.ImportModel)
+        return DetectedFileType("stl", pycam.Importers.STLImporter.import_model, uri)
     elif filename.lower().endswith(".dxf"):
-        return ("dxf", pycam.Importers.DXFImporter.import_model)
+        return DetectedFileType("dxf", pycam.Importers.DXFImporter.import_model, uri)
     elif filename.lower().endswith(".svg"):
-        return ("svg", pycam.Importers.SVGImporter.import_model)
+        return DetectedFileType("svg", import_model_from_svg, uri)
     elif filename.lower().endswith(".eps") \
             or filename.lower().endswith(".ps"):
-        return ("ps", pycam.Importers.PSImporter.import_model)
+        return DetectedFileType("ps", pycam.Importers.PSImporter.import_model, uri)
     else:
         if not quiet:
-            log.error("Importers: Failed to detect the model type of '%s'. Is the file extension "
-                      "(stl/dxf/svg/eps/ps) correct?", filename)
-        return failure
+            _log.error("Importers: Failed to detect the model type of '%s'. Is the file extension "
+                       "(stl/dxf/svg/eps/ps) correct?", filename)
+        return None

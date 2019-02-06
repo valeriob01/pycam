@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2012 Lars Kruse <devel@sumpfralle.de>
 
@@ -20,8 +19,8 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
 import pycam.Exporters.GCode
-from pycam.Toolpath import CORNER_STYLE_EXACT_PATH, CORNER_STYLE_EXACT_STOP, \
-        CORNER_STYLE_OPTIMIZE_SPEED, CORNER_STYLE_OPTIMIZE_TOLERANCE
+from pycam.Toolpath import ToolpathPathMode
+from pycam.workspace import LengthUnit
 
 
 DEFAULT_HEADER = (("G40", "disable tool radius compensation"),
@@ -45,11 +44,6 @@ class LinuxCNC(pycam.Exporters.GCode.BaseGenerator):
     def add_header(self):
         for command, comment in DEFAULT_HEADER:
             self.add_command(command, comment=comment)
-        # TODO: use a "unit" filter
-        if True:
-            self.add_command("G21", "metric")
-        else:
-            self.add_command("G20", "imperial")
 
     def add_footer(self):
         self.add_command("M2", "end program")
@@ -104,15 +98,23 @@ class LinuxCNC(pycam.Exporters.GCode.BaseGenerator):
         # "seconds" may be floats or integers
         self.add_command("G04 P{}".format(seconds), "wait for {} seconds".format(seconds))
 
+    def command_unit(self, unit):
+        if unit == LengthUnit.METRIC_MM:
+            self.add_command("G21", "metric")
+        elif unit == LengthUnit.IMPERIAL_INCH:
+            self.add_command("G20", "imperial")
+        else:
+            assert False, "Invalid unit requested: {}".format(unit)
+
     def command_corner_style(self, extra_args):
         path_mode, motion_tolerance, naive_tolerance = extra_args
-        if path_mode == CORNER_STYLE_EXACT_PATH:
+        if path_mode == ToolpathPathMode.CORNER_STYLE_EXACT_PATH:
             self.add_command("G61", "exact path mode")
-        elif path_mode == CORNER_STYLE_EXACT_STOP:
+        elif path_mode == ToolpathPathMode.CORNER_STYLE_EXACT_STOP:
             self.add_command("G61.1", "exact stop mode")
-        elif path_mode == CORNER_STYLE_OPTIMIZE_SPEED:
+        elif path_mode == ToolpathPathMode.CORNER_STYLE_OPTIMIZE_SPEED:
             self.add_command("G64", "continuous mode with maximum speed")
-        elif path_mode == CORNER_STYLE_OPTIMIZE_TOLERANCE:
+        elif path_mode == ToolpathPathMode.CORNER_STYLE_OPTIMIZE_TOLERANCE:
             if not naive_tolerance:
                 self.add_command("G64 P%f" % motion_tolerance, "continuous mode with tolerance")
             else:

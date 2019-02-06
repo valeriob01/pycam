@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -33,18 +32,12 @@ DEPENDENCY_DESCRIPTION = {
     "gtk": ("Python bindings for GTK+",
             "Install the package 'python-gtk2'",
             "see http://www.bonifazi.eu/appunti/pygtk_windows_installer.exe"),
-    "opengl": ("Python bindings for OpenGL",
-               "Install the package 'python-opengl'",
-               "see http://www.bonifazi.eu/appunti/pygtk_windows_installer.exe"),
-    "gtkgl": ("GTK extension for OpenGL",
-              "Install the package 'python-gtkglext1'",
-              "see http://www.bonifazi.eu/appunti/pygtk_windows_installer.exe"),
-    "gl": ("OpenGL support of graphic driver",
-           "Your current graphic driver does not seem to support OpenGL.",
-           ""),
+    "webkitgtk": ("Python bindings for WebKitGTK",
+                  "Install the package 'libwebkit2gtk'",
+                  "The 3D preview can be used in a separate browser."),
 }
 
-REQUIREMENTS_LINK = "http://sf.net/apps/mediawiki/pycam/?title=Requirements"
+REQUIREMENTS_LINK = "http://pycam.sourceforge.net/requirements"
 
 # Usually the windows registry "HKEY_LOCAL_MACHINE/SOFTWARE/Gtk+/Path" contains
 # something like: C:\Programs\Common files\GTK
@@ -63,12 +56,18 @@ def import_gtk_carefully():
         in_windows = True
     except ImportError:
         in_windows = False
+    try:
+        import gi
+        # avoid Gtk version warnings for later imports
+        gi.require_version("Gtk", "3.0")
+    except ImportError:
+        pass
     if not in_windows:
         # We are not in windows - thus we just try to import gtk without
         # the need for any more manual preparations.
-        import gtk  # noqa F401
+        import gi.repository.Gtk  # noqa F401
     else:
-        # We try to retrive the GTK library directory from the registry before
+        # We try to retrieve the GTK library directory from the registry before
         # trying any import. Otherwise the user will always see a warning
         # dialog regarding the missing libglib-2.0-0.dll file. This Windows
         # warning dialog can't be suppressed - thus we should try to avoid it.
@@ -92,7 +91,7 @@ def import_gtk_carefully():
             else:
                 os.environ["PATH"] = gtk_dll_path
         # everything should be prepared - now we try to import it again
-        import gtk  # noqa F401
+        import gi.repository.Gtk  # noqa F401
 
 
 def requirements_details_gtk():
@@ -109,21 +108,11 @@ def requirements_details_gtk():
 def recommends_details_gtk():
     result = {}
     try:
-        import gtk.gtkgl  # noqa F401
-        result["gtkgl"] = True
-        result["gl"] = True
+        import gi.repository.WebKit2  # noqa F401
+        result["webkitgtk"] = True
     except ImportError as err_msg:
-        log.warn("Failed to import OpenGL for GTK (ImportError): %s", str(err_msg))
-        result["gtkgl"] = False
-    except RuntimeError as err_msg:
-        log.warn("Failed to import OpenGL for GTK (RuntimeError): %s", str(err_msg))
-        result["gl"] = False
-    try:
-        import OpenGL  # noqa F401
-        result["opengl"] = True
-    except ImportError as err_msg:
-        log.warn("Failed to import OpenGL: %s", str(err_msg))
-        result["opengl"] = False
+        log.warn("Failed to import WebKitGTK: %s", str(err_msg))
+        result["webkitgtk"] = False
 
 
 def check_dependencies(details):
@@ -137,17 +126,15 @@ def check_dependencies(details):
 
 def get_dependency_report(details, prefix=""):
     result = []
-    DESC_COL = 0
+    columns = {"description": 0, "advice": 1}
     if sys.platform.startswith("win"):
-        ADVICE_COL = 2
-    else:
-        ADVICE_COL = 1
+        columns["advice"] = 2
     for key, state in details.items():
-        text = "%s%s: " % (prefix, DEPENDENCY_DESCRIPTION[key][DESC_COL])
+        text = "%s%s: " % (prefix, DEPENDENCY_DESCRIPTION[key][columns["description"]])
         if state:
             text += "OK"
         else:
-            text += "MISSING (%s)" % DEPENDENCY_DESCRIPTION[key][ADVICE_COL]
+            text += "MISSING (%s)" % DEPENDENCY_DESCRIPTION[key][columns["advice"]]
         result.append(text)
     return os.linesep.join(result)
 
@@ -175,7 +162,7 @@ def set_parent_controls_sensitivity(widget, new_state):
         parent = parent.get_parent()
 
 
-class EmergencyDialog(object):
+class EmergencyDialog:
     """ This graphical message window requires no external dependencies.
     The Tk interface package is part of the main python distribution.
     Use this class for displaying dependency errors (especially on Windows).

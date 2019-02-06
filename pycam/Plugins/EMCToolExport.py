@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -21,6 +20,8 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 
 import pycam.Plugins
 import pycam.Exporters.LinuxCNCToolExporter
+import pycam.workspace.data_models
+
 
 FILTER_LINUXCNC_TOOL = (("LinuxCNC tool files", "*.tbl"),)
 
@@ -44,17 +45,18 @@ class LinuxCNCToolExport(pycam.Plugins.PluginBase):
             self.register_gtk_handlers(self._gtk_handlers)
             self.register_event_handlers(self._event_handlers)
             self._update_emc_tool_button()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self.core.unregister_ui("export_menu", self.export_action)
             self.unregister_gtk_accelerator("export", self.export_action)
-            self.unregister_gtk_handlers(self._gtk_handlers)
-            self.unregister_event_handlers(self._event_handlers)
+        super().teardown()
 
     def _update_emc_tool_button(self, widget=None):
-        exportable = len(self.core.get("tools")) > 0
+        exportable = len(pycam.workspace.data_models.Tool.get_collection()) > 0
         self.export_action.set_sensitive(exportable)
 
     def export_emc_tools(self, widget=None, filename=None):
@@ -85,4 +87,4 @@ class LinuxCNCToolExport(pycam.Plugins.PluginBase):
             except IOError as err_msg:
                 self.log.error("Failed to save LinuxCNC tool file: %s", err_msg)
             else:
-                self.core.emit_event("notify-file-saved", filename)
+                self.core.get("set_last_filename")(filename)

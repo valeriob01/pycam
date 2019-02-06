@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2012 Lars Kruse <devel@sumpfralle.de>
 
@@ -19,9 +18,9 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import code
+from io import StringIO
 import os
 import sys
-import StringIO
 
 import pycam.Plugins
 
@@ -39,9 +38,9 @@ class GtkConsole(pycam.Plugins.PluginBase):
     def setup(self):
         self._history = []
         self._history_position = None
+        if not self._gtk:
+            return False
         if self.gui:
-            import gtk
-            self._gtk = gtk
             self._console = code.InteractiveConsole(locals=self.core.get_namespace(),
                                                     filename="PyCAM")
             # redirect sys.stdin/stdout - "exec" always writes there
@@ -49,7 +48,7 @@ class GtkConsole(pycam.Plugins.PluginBase):
             self._original_stdin = sys.stdin
             self._console_buffer = self.gui.get_object("ConsoleViewBuffer")
             # redirect the virtual console output to the window
-            sys.stdout = StringIO.StringIO()
+            sys.stdout = StringIO()
 
             def console_write(data):
                 self._console_buffer.insert(self._console_buffer.get_end_iter(), data)
@@ -57,7 +56,7 @@ class GtkConsole(pycam.Plugins.PluginBase):
 
             self._console.write = console_write
             # make sure that we are never waiting for input (e.g. "help()")
-            sys.stdin = StringIO.StringIO()
+            sys.stdin = StringIO()
             # multiprocessing has a bug regarding the handling of sys.stdin:
             # see http://bugs.python.org/issue10174
             sys.stdin.fileno = lambda: -1
@@ -81,17 +80,18 @@ class GtkConsole(pycam.Plugins.PluginBase):
                     ("ConsoleDialog", "destroy", hide_window)):
                 self._gtk_handlers.append((self.gui.get_object(objname), signal, func))
             self.register_gtk_handlers(self._gtk_handlers)
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
+            self.unregister_gtk_handlers(self._gtk_handlers)
             self._set_window_visibility(value=False)
             sys.stdout = self._original_stdout
             sys.stdin = self._original_stdin
             console_action = self.gui.get_object("ToggleConsoleWindow")
             self.unregister_gtk_accelerator("console", console_action)
             self.core.unregister_ui("view_menu", console_action)
-            self.unregister_gtk_handlers(self._gtk_handlers)
+        super().teardown()
 
     def _clear_console(self, widget=None):
         start, end = self._console_buffer.get_bounds()
@@ -163,7 +163,7 @@ class GtkConsole(pycam.Plugins.PluginBase):
             # ignore, if any modifier is pressed
             return False
         input_control = self.gui.get_object("CommandInput")
-        if (keyval == self._gtk.keysyms.Up):
+        if (keyval == self._gdk.KEY_Up):
             if self._history_position is None:
                 # store the current (new) line for later
                 self._history_lastline_backup = input_control.get_text()
@@ -174,7 +174,7 @@ class GtkConsole(pycam.Plugins.PluginBase):
             else:
                 # invalid -> no change
                 return True
-        elif (keyval == self._gtk.keysyms.Down):
+        elif (keyval == self._gdk.KEY_Down):
             if self._history_position is None:
                 return True
             self._history_position += 1

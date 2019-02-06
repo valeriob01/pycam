@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -20,6 +19,7 @@ along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import pycam.Plugins
+import pycam.Toolpath
 
 
 class TaskTypeMilling(pycam.Plugins.PluginBase):
@@ -30,45 +30,10 @@ class TaskTypeMilling(pycam.Plugins.PluginBase):
 
     def setup(self):
         parameters = {"collision_models": [], "tool": None, "process": None, "bounds": None}
-        self.core.get("register_parameter_set")("task", "milling", "Milling", self.run_task,
+        self.core.get("register_parameter_set")("task", "milling", "Milling", None,
                                                 parameters=parameters, weight=10)
-        return True
+        return super().setup()
 
     def teardown(self):
         self.core.get("unregister_parameter_set")("task", "milling")
-
-    def run_task(self, task, callback=None):
-        environment = {}
-        for key in task["parameters"]:
-            environment[key] = task["parameters"][key]
-        if environment["tool"] is None:
-            self.log.error("You need to assign a tool to this task.")
-            return
-        if environment["process"] is None:
-            self.log.error("You need to assign a process to this task.")
-            return
-        if environment["bounds"] is None:
-            self.log.error("You need to assign bounds to this task.")
-            return
-        funcs = {}
-        for key, set_name in (("tool", "shape"), ("process", "strategy")):
-            funcs[key] = self.core.get("get_parameter_sets")(
-                key)[environment[key][set_name]]["func"]
-        tool, tool_filters = funcs["tool"](environment["tool"]["parameters"])
-        box = environment["bounds"].get_absolute_limits(tool_radius=tool.radius,
-                                                        models=environment["collision_models"])
-        path_generator, motion_grid = funcs["process"](environment["process"], tool.radius, box)
-        if path_generator is None:
-            # we assume that an error message was given already
-            return
-        models = [m.model for m in task["parameters"]["collision_models"]]
-        if not models:
-            # issue a warning - and go ahead ...
-            self.log.warn("No collision model was selected. This can be intentional, but maybe "
-                          "you simply forgot it.")
-        moves = path_generator.GenerateToolPath(tool, models, motion_grid, minz=box.lower.z,
-                                                maxz=box.upper.z, draw_callback=callback)
-        if not moves:
-            self.log.info("No valid moves found")
-            return None
-        return moves, tool, tool_filters
+        super().teardown()

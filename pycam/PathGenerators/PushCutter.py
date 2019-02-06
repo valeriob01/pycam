@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 Copyright 2008-2009 Lode Leroy
@@ -38,14 +37,14 @@ def _process_one_line(extra_args):
     return points
 
 
-class PushCutter(object):
+class PushCutter:
 
     def __init__(self, waterlines=False):
         log.debug("Starting PushCutter")
         self.waterlines = waterlines
 
-    def GenerateToolPath(self, cutter, models, motion_grid, minz=None, maxz=None,
-                         draw_callback=None):
+    def generate_toolpath(self, cutter, models, motion_grid, minz=None, maxz=None,
+                          draw_callback=None):
         # Transfer the grid (a generator) into a list of lists and count the items.
         grid = []
         num_of_grid_positions = 0
@@ -75,8 +74,8 @@ class PushCutter(object):
 
             if self.waterlines:
                 self.pa.new_direction(0)
-            result = self.GenerateToolPathSlice(cutter, models, layer_grid, draw_callback,
-                                                progress_counter)
+            result = self.generate_toolpath_slice(cutter, models, layer_grid, draw_callback,
+                                                  progress_counter)
             if self.waterlines:
                 self.pa.end_direction()
                 self.pa.finish()
@@ -100,7 +99,7 @@ class PushCutter(object):
                     other_models = models[1:]
                     for p1, p2 in pairs:
                         free_points = get_free_paths_triangles(other_models, cutter, p1, p2)
-                        for index in range(len(free_points) / 2):
+                        for index in range(len(free_points) // 2):
                             result.append(MoveStraight(free_points[2 * index]))
                             result.append(MoveStraight(free_points[2 * index + 1]))
                             result.append(MoveSafety())
@@ -113,8 +112,8 @@ class PushCutter(object):
         else:
             return path
 
-    def GenerateToolPathSlice(self, cutter, models, layer_grid, draw_callback=None,
-                              progress_counter=None):
+    def generate_toolpath_slice(self, cutter, models, layer_grid, draw_callback=None,
+                                progress_counter=None):
         path = []
         # the ContourCutter pathprocessor does not work with combined models
         if self.waterlines:
@@ -132,7 +131,7 @@ class PushCutter(object):
                     for point in points:
                         self.pa.append(point)
                 else:
-                    for index in range(len(points) / 2):
+                    for index in range(len(points) // 2):
                         path.append(MoveStraight(points[2 * index]))
                         path.append(MoveStraight(points[2 * index + 1]))
                         path.append(MoveSafety())

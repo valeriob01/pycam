@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -39,12 +38,13 @@ class ModelPlaneMirror(pycam.Plugins.PluginBase):
             self.register_gtk_handlers(self._gtk_handlers)
             self.register_event_handlers(self._event_handlers)
             self._update_plane_widgets()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
-            self.unregister_gtk_handlers(self._gtk_handlers)
             self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
+        super().teardown()
 
     def _update_plane_widgets(self):
         plane_widget = self.gui.get_object("ModelMirrorBox")
@@ -57,19 +57,13 @@ class ModelPlaneMirror(pycam.Plugins.PluginBase):
         models = self.core.get("models").get_selected()
         if not models:
             return
-        self.core.emit_event("model-change-before")
-        progress = self.core.get("progress")
-        progress.update(text="Mirroring model")
-        progress.disable_cancel()
-        progress.set_multiple(len(models), "Model")
-        for plane in ("XY", "XZ", "YZ"):
+        for plane, matrix in (("XY", [[1, 0, 0], [0, 1, 0], [0, 0, -1]]),
+                              ("XZ", [[1, 0, 0], [0, -1, 0], [0, 0, 1]]),
+                              ("YZ", [[-1, 0, 0], [0, 1, 0], [0, 0, 1]])):
             if self.gui.get_object("MirrorPlane%s" % plane).get_active():
                 break
         else:
             assert False, "No mirror plane selected"
         for model in models:
-            model.model.transform_by_template("%s_mirror" % plane.lower(),
-                                              callback=progress.update)
-            progress.update_multiple()
-        progress.finish()
-        self.core.emit_event("model-change-after")
+            model.extend_value("transformations",
+                               [{"action": "multiply_matrix", "matrix": matrix}])

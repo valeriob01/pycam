@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2010 Lars Kruse <devel@sumpfralle.de>
 
@@ -18,9 +17,7 @@ You should have received a copy of the GNU General Public License
 along with PyCAM.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-import locale
 import logging
-import re
 import time
 
 
@@ -163,34 +160,22 @@ class GTKHandler(logging.Handler):
         self.parent_window = parent_window
 
     def emit(self, record):
-        raw_message = self.format(record)
-        try:
-            message = raw_message.encode("utf-8")
-        except UnicodeDecodeError:
-            try:
-                # try to decode the string with the current locale
-                current_encoding = locale.getpreferredencoding()
-                message = raw_message.decode(current_encoding)
-            except (UnicodeDecodeError, LookupError):
-                # remove all critical characters
-                message = re.sub(r"[^\w\s]", "", raw_message)
-        # Replace all "<>" characters (invalid for markup styles) with html
-        # entities.
-        message = re.sub("<", "&lt;", message)
-        message = re.sub(">", "&gt;", message)
-        import gtk
+        message = self.format(record)
+        # Replace all "<>" characters (invalid for markup styles) with html entities.
+        message = message.replace("<", "&lt;").replace(">", "&gt;")
+        from gi.repository import Gtk
         if record.levelno <= 20:
-            message_type = gtk.MESSAGE_INFO
+            message_type = Gtk.MessageType.INFO
             message_title = "Information"
         elif record.levelno <= 30:
-            message_type = gtk.MESSAGE_WARNING
+            message_type = Gtk.MessageType.WARNING
             message_title = "Warning"
         else:
-            message_type = gtk.MESSAGE_ERROR
+            message_type = Gtk.MessageType.ERROR
             message_title = "Error"
-        window = gtk.MessageDialog(self.parent_window, type=message_type, buttons=gtk.BUTTONS_OK)
+        window = Gtk.MessageDialog(self.parent_window, type=message_type,
+                                   buttons=Gtk.ButtonsType.OK)
         window.set_markup(str(message))
-        message_title = message_title.encode("utf-8", "ignore")
         window.set_title(message_title)
         # make sure that the window gets destroyed later
         for signal in ("close", "response"):

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Copyright 2011 Lars Kruse <devel@sumpfralle.de>
 
@@ -57,19 +56,20 @@ class ModelExtrusion(pycam.Plugins.PluginBase):
             self.register_gtk_handlers(self._gtk_handlers)
             self.register_event_handlers(self._event_handlers)
             self._update_extrude_widgets()
-        return True
+        return super().setup()
 
     def teardown(self):
         if self.gui:
-            self.core.unregister_ui("model_handling", self.gui.get_object("ModelExtrusionFrame"))
-            self.unregister_gtk_handlers(self._gtk_handlers)
             self.unregister_event_handlers(self._event_handlers)
+            self.unregister_gtk_handlers(self._gtk_handlers)
+            self.core.unregister_ui("model_handling", self.gui.get_object("ModelExtrusionFrame"))
+        super().teardown()
 
     def _get_extrudable_models(self):
         models = self.core.get("models").get_selected()
         extrudables = []
         for model in models:
-            if (model is not None) and hasattr(model.model, "extrude"):
+            if (model is not None) and hasattr(model.get_model(), "extrude"):
                 extrudables.append(model)
         return extrudables
 
@@ -111,8 +111,8 @@ class ModelExtrusion(pycam.Plugins.PluginBase):
             progress.update(text="Extruding models")
             progress.set_multiple(len(selected_models), "Model")
             for model in selected_models:
-                new_model = model.model.extrude(stepping=grid_size, func=func,
-                                                callback=progress.update)
+                new_model = model.get_model().extrude(stepping=grid_size, func=func,
+                                                      callback=progress.update)
                 if new_model:
                     self.core.get("models").add_model(new_model,
                                                       name_template="Extruded model #%d")
